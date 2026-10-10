@@ -22,7 +22,7 @@ const CHARACTER_PATHS := [
 
 var camera_rig: Node3D
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
-## The visual body; has update_motion(delta, speed, grounded, vertical_speed).
+## The visual body; has update_motion(delta, velocity, grounded).
 var model: Node3D
 
 
@@ -96,7 +96,7 @@ func _physics_process(delta: float) -> void:
 		rotation.y = lerp_angle(rotation.y, face, clampf(delta * 10.0, 0.0, 1.0))
 
 	move_and_slide()
-	model.update_motion(delta, Vector2(velocity.x, velocity.z).length(), is_on_floor(), velocity.y)
+	model.update_motion(delta, velocity, is_on_floor())
 
 	# Fell through the world somehow — put back on the ground.
 	if global_position.y < -50.0:

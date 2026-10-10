@@ -37,7 +37,10 @@ versioned.
 
 By default you play a procedurally built person (articulated body, clothes,
 face, randomised skin/hair/outfit via `look_seed` on the Player node) with a
-procedural idle / walk / jog / sprint / jump cycle. For a fully realistic,
+procedural idle / walk / jog / sprint / jump cycle with foot planting:
+stance feet are locked to the ground (two-bone leg IK, heel-to-toe roll,
+pelvis drops only as far as the legs need), and when you stop or turn on the
+spot the feet step back under the body. For a fully realistic,
 mocap-animated person, drop a rigged `.glb` into `assets/characters/player.glb`
 — see [assets/characters/README.md](assets/characters/README.md). Tested with
 Mixamo exports (both cm/+Z and m/−Z conventions).

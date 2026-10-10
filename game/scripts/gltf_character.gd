@@ -108,9 +108,10 @@ static func pick_clips(names: PackedStringArray) -> Dictionary:
 	return out
 
 
-func update_motion(_delta: float, speed: float, grounded: bool, _vertical_speed: float) -> void:
+func update_motion(_delta: float, velocity: Vector3, grounded: bool) -> void:
 	if anim == null:
 		return
+	var speed := Vector2(velocity.x, velocity.z).length()
 	var role := "idle"
 	var scale_speed := 1.0
 	if not grounded and clips["air"] != "":

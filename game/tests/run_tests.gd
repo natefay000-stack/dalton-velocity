@@ -130,10 +130,13 @@ func test_multipolygon() -> void:
 	root.free()
 
 
+## Lowest actual vertex (not bounding box) of all meshes under `n`.
 func _lowest_mesh_y(n: Node) -> float:
 	var lo := INF
 	if n is MeshInstance3D:
-		lo = (n.global_transform * n.get_aabb()).position.y
+		var xf: Transform3D = n.global_transform
+		for v in n.mesh.get_faces():
+			lo = minf(lo, (xf * v).y)
 	for c in n.get_children():
 		lo = minf(lo, _lowest_mesh_y(c))
 	return lo
@@ -153,25 +156,31 @@ func test_humanoid() -> void:
 	var h: Node3D = Humanoid.new()
 	h.build()
 	root.add_child(h)
+	var dt := 1.0 / 60.0
 	for i in 30:
-		h.update_motion(1.0 / 60.0, 0.0, true, 0.0)
+		h.update_motion(dt, Vector3.ZERO, true)
 	var low := _lowest_mesh_y(h)
 	var high := _highest_mesh_y(h)
-	check(absf(low) < 0.02, "idle: soles on the ground (lowest y=%.3f)" % low)
+	check(absf(low) < 0.005, "idle: soles on the ground (lowest y=%.3f)" % low)
 	check(high > 1.70 and high < 1.90, "adult height (top y=%.2f)" % high)
 
-	# Walking: legs alternate, feet never sink far below the ground.
-	var hip_l: Node3D = h.joints["hip_l"]
-	var min_a := INF
-	var max_a := -INF
-	var lowest := INF
-	for i in 120:
-		h.update_motion(1.0 / 60.0, 1.6, true, 0.0)
-		min_a = minf(min_a, hip_l.rotation.x)
-		max_a = maxf(max_a, hip_l.rotation.x)
-		lowest = minf(lowest, _lowest_mesh_y(h))
-	check(max_a > 0.25 and min_a < -0.25, "walk: left thigh swings %.2f..%.2f rad" % [min_a, max_a])
-	check(lowest > -0.08, "walk: feet stay near the ground (min y=%.3f)" % lowest)
+	for case in [["walk", 1.6, 0.0], ["jog", 4.0, 0.0], ["sprint", 7.0, 0.0], ["walk+turn", 1.6, 0.6]]:
+		_check_planting(h, case[0], case[1], case[2])
+
+	# Stop mid-stride: feet step back under the body and stay put.
+	for i in 90:
+		h.update_motion(dt, Vector3.ZERO, true)
+	var off := 0.0
+	for side in ["l", "r"]:
+		var a: Vector3 = h.joints["ankle_" + side].global_position
+		off = maxf(off, Vector2(a.x - h._rest_world(side).x, a.z - h._rest_world(side).z).length())
+	check(off < h.SETTLE_DISTANCE + 0.01, "stopping: feet settle under body (max offset %.3f m)" % off)
+
+	# Teleport (e.g. leaving the car): feet follow instead of stretching.
+	h.global_position += Vector3(25, 0, -10)
+	h.update_motion(dt, Vector3.ZERO, true)
+	var a: Vector3 = h.joints["ankle_l"].global_position
+	check(a.distance_to(h._rest_world("l")) < 0.05, "teleport: feet reset to body")
 
 	# Same seed -> same look; the look varies across seeds.
 	var colors := {}
@@ -183,6 +192,47 @@ func test_humanoid() -> void:
 		hh.free()
 	check(colors.size() > 3, "look_seed varies appearance (%d distinct looks of 8)" % colors.size())
 	h.free()
+
+
+## Moves the humanoid at `speed` (turning at `turn_rate` rad/s) for 4 s and
+## checks that planted feet neither slide nor sink, and the IK hits its
+## targets.
+func _check_planting(h: Node3D, label: String, speed: float, turn_rate: float) -> void:
+	var dt := 1.0 / 60.0
+	var max_slide := 0.0
+	var max_ik_err := 0.0
+	var lowest := INF
+	var stance_low := -INF
+	var planted_frames := 0
+	var thigh_min := INF
+	var thigh_max := -INF
+	var prev := {}
+	for i in 240:
+		h.rotation.y += turn_rate * dt
+		var vel: Vector3 = h.global_basis * Vector3(0, 0, -speed)
+		h.global_position += vel * dt
+		h.update_motion(dt, vel, true)
+		lowest = minf(lowest, _lowest_mesh_y(h))
+		thigh_min = minf(thigh_min, h._pose["hip_l"])
+		thigh_max = maxf(thigh_max, h._pose["hip_l"])
+		for side in ["l", "r"]:
+			var f: Dictionary = h._feet[side]
+			var ankle: Vector3 = h.joints["ankle_" + side].global_position
+			var want: Vector3 = f["pos"] + Vector3(0, f["lift"], 0)
+			if i > 30:
+				max_ik_err = maxf(max_ik_err, ankle.distance_to(want))
+			if f["planted"] and prev.get(side) != null and i > 30:
+				var p: Vector3 = prev[side]
+				max_slide = maxf(max_slide, Vector2(ankle.x - p.x, ankle.z - p.z).length())
+				planted_frames += 1
+				stance_low = maxf(stance_low, ankle.y - f["lift"])
+			prev[side] = ankle if f["planted"] else null
+	check(planted_frames > 60, "%s: feet spend time planted (%d foot-frames)" % [label, planted_frames])
+	check(max_slide < 0.003, "%s: planted feet don't slide (max %.1f mm/frame)" % [label, max_slide * 1000.0])
+	check(max_ik_err < 0.01, "%s: IK reaches foot targets (max error %.1f mm)" % [label, max_ik_err * 1000.0])
+	check(lowest > -0.005, "%s: nothing sinks below the ground (lowest y=%.3f)" % [label, lowest])
+	check(absf(stance_low - h.ANKLE) < 0.005, "%s: stance ankle at ground height" % label)
+	check(thigh_max - thigh_min > 0.4, "%s: legs swing (%.2f..%.2f rad)" % [label, thigh_min, thigh_max])
 
 
 func test_clip_matching() -> void:

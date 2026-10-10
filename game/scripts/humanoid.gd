@@ -39,15 +39,33 @@ const SPINE := 0.46
 const UPPER_ARM := 0.30
 const FOREARM := 0.26
 
-# Stride: distance covered per full gait cycle (two steps).
-const WALK_STRIDE := 1.45
-const RUN_STRIDE := 2.6
-const WALK_SPEED_REF := 1.6
-const RUN_SPEED_REF := 6.0
+# Gait. Stride = distance per full cycle (two steps); duty = fraction of the
+# cycle a foot is on the ground (>0.5 walking, <0.5 running = flight phase).
+const WALK_STRIDE := 1.2
+const RUN_STRIDE := 2.3
+const WALK_DUTY := 0.6
+const RUN_DUTY := 0.34
+const SWING_LIFT := 0.07
+const TOE_OFF_PITCH := 0.5  # rad, foot angle at the end of stance
+const FOOT_BALL := 0.19  # ankle -> toe tip (pivot when the heel lifts)
+const FOOT_HEEL := 0.085  # ankle -> back of heel (pivot at heel strike)
+const FOOT_SPREAD := 0.095  # = lateral hip joint offset, feet under hips
+const IDLE_SPEED := 0.15
+const SETTLE_DISTANCE := 0.12
+const SETTLE_TIME := 0.28
+const SHOULDER_ROLL := 0.08
+## Ignore floor contact blips shorter than this (CharacterBody3D can report
+## is_on_floor() false for a frame on seams).
+const AIR_GRACE := 0.12
 
 var joints: Dictionary = {}  # name -> Node3D
 var _pose: Dictionary = {}  # joint name -> current X angle
-var _phase := 0.0
+var _phase := 0.0  # 0..1 through the gait cycle
+## side -> {pos: world ankle target, from, planted, lift, pitch, settle}
+var _feet: Dictionary = {}
+var _was_airborne := false
+var _air_time := 0.0
+var _idle := true
 var _time := 0.0
 var _hips_y := HIP_HEIGHT
 var _mats: Dictionary = {}
@@ -100,7 +118,7 @@ func build() -> void:
 		var wrist := _joint("wrist_" + s, elbow, Vector3(0, -FOREARM, 0))
 		_part(wrist, _capsule(0.038, 0.13), Vector3(0, -0.055, 0), Vector3.ZERO, Vector3(0.65, 1, 1.15), "skin")  # palm
 		_part(wrist, _capsule(0.018, 0.07), Vector3(0.0, -0.02, -0.035), Vector3(-0.6, 0, 0), Vector3.ONE, "skin")  # thumb
-		shoulder.rotation.z = 0.08 * side  # arms hang slightly away from the body
+		shoulder.rotation.z = SHOULDER_ROLL * side  # arms hang slightly away from the body
 
 		# Legs.
 		var hip := _joint("hip_" + s, hips, Vector3(0.095 * side, -HIP_DROP, 0))
@@ -109,7 +127,7 @@ func build() -> void:
 		_part(knee, _capsule(0.062, SHIN + 0.06), Vector3(0, -SHIN * 0.5, 0), Vector3.ZERO, Vector3(1, 1, 1.05), "pants")
 		var ankle := _joint("ankle_" + s, knee, Vector3(0, -SHIN, 0))
 		# Shoe: rounded upper on a flat sole, toes toward -Z.
-		_part(ankle, _capsule(0.052, 0.27), Vector3(0, -0.035, -0.055), Vector3(PI / 2, 0, 0), Vector3(1.0, 1, 0.8), "shoes")
+		_part(ankle, _capsule(0.052, 0.27), Vector3(0, -0.028, -0.055), Vector3(PI / 2, 0, 0), Vector3(1.0, 1, 0.8), "shoes")
 		_part(ankle, _box(Vector3(0.10, 0.025, 0.27)), Vector3(0, -ANKLE + 0.0125, -0.055), Vector3.ZERO, Vector3.ONE, "sole")
 
 	for j in joints:
@@ -141,80 +159,266 @@ func _build_head(head: Node3D, long_hair: bool) -> void:
 
 
 # --- Animation -------------------------------------------------------------
+#
+# Legs use foot planting: each foot has a world-space ankle target. While a
+# foot is in stance its target is locked to the ground, so it cannot slide or
+# sink; during swing it arcs to a predicted landing spot. A two-bone IK solve
+# per leg turns targets into hip/knee/ankle rotations, and the pelvis lowers
+# just enough that both targets stay reachable (which also gives the natural
+# up-and-down bob of a walk). Arms, spine and head stay procedural.
 
-## speed: horizontal m/s. grounded: on floor. vertical_speed: m/s, + is up.
-func update_motion(delta: float, speed: float, grounded: bool, vertical_speed: float) -> void:
-	if joints.is_empty():
+## velocity: body velocity in world space (m/s). grounded: on floor.
+func update_motion(delta: float, velocity: Vector3, grounded: bool) -> void:
+	if joints.is_empty() or delta <= 0.0:
 		return
 	_time += delta
-	var target := {}
-	for j in _pose:
-		target[j] = 0.0
-	var hips_y := HIP_HEIGHT
+	var flat_vel := Vector3(velocity.x, 0.0, velocity.z)
+	var speed := flat_vel.length()
+	var t := clampf(delta * 12.0, 0.0, 1.0)
+
+	_air_time = 0.0 if grounded else _air_time + delta
+	if _air_time > AIR_GRACE:
+		_was_airborne = true
+		_air_pose(velocity.y, t)
+		return
+	if _was_airborne or not _feet_valid():
+		_was_airborne = false
+		_reset_feet()
+
+	var run := clampf((speed - 2.2) / 3.0, 0.0, 1.0)
 	var lean := 0.0
 	var spine_twist := 0.0
+	var hips_target := HIP_HEIGHT - 0.008
+	var arm_target := {"l": 0.0, "r": 0.0}
 
-	if not grounded:
-		# Airborne: knees up while rising, legs reaching down while falling.
-		var rising := clampf(vertical_speed / 4.0, -1.0, 1.0)
-		target["hip_l"] = 0.55 + 0.25 * rising
-		target["knee_l"] = -1.0 - 0.3 * rising
-		target["hip_r"] = 0.1
-		target["knee_r"] = -0.5
-		target["shoulder_l"] = -0.4
-		target["shoulder_r"] = 0.5
-		target["elbow_l"] = 0.6
-		target["elbow_r"] = 0.6
-		lean = -0.1
-	elif speed < 0.15:
-		# Idle: breathing and a slow weight shift.
+	if speed < IDLE_SPEED:
+		_idle = true
+		_settle_feet(delta)
 		var breathe := sin(_time * 1.6)
-		target["spine"] = 0.015 * breathe
-		target["neck"] = -0.01 * breathe
-		target["elbow_l"] = 0.12
-		target["elbow_r"] = 0.12
-		target["knee_l"] = -0.04
-		hips_y -= 0.005
+		_pose["spine"] = lerpf(_pose["spine"], 0.015 * breathe, t)
+		_pose["neck"] = lerpf(_pose["neck"], -0.01 * breathe, t)
 	else:
-		# Run blend 0 (walk) .. 1 (run).
-		var run := clampf((speed - 2.2) / 3.0, 0.0, 1.0)
+		if _idle:
+			# Moving off from standing: both feet are under the body, which
+			# matches mid-stance of the left foot (and mid-swing of the right).
+			_idle = false
+			_phase = lerpf(WALK_DUTY, RUN_DUTY, run) * 0.5
+		_cancel_settle()
 		var stride := lerpf(WALK_STRIDE, RUN_STRIDE, run)
-		_phase = fmod(_phase + delta * speed / stride * TAU, TAU)
-		var p := _phase
-		var swing := lerpf(0.42, 0.75, run) * clampf(speed / WALK_SPEED_REF, 0.3, 1.0)
-		for side in [["l", 0.0], ["r", PI]]:
-			var s: String = side[0]
-			var ph: float = p + side[1]
-			var thigh := swing * sin(ph)
-			# Knee flexes most mid-swing (thigh moving forward).
-			var knee := -(lerpf(0.65, 1.5, run) * maxf(0.0, cos(ph)) + lerpf(0.06, 0.3, run))
-			target["hip_" + s] = thigh + lerpf(0.0, 0.2, run)
-			target["knee_" + s] = knee
-			# Toe-off: foot points down as the leg trails.
-			target["ankle_" + s] = 0.25 * maxf(0.0, -sin(ph)) * (1.0 - run) + 0.15 * run
-			# Arms counter-swing to the opposite leg.
-			target["shoulder_" + s] = -thigh * lerpf(0.75, 0.7, run)
-			target["elbow_" + s] = lerpf(0.2, 1.5, run) + 0.15 * maxf(0.0, -sin(ph))
-		# Hips drop when legs are spread, rise over the planted foot.
-		var spread := absf(sin(p))
-		hips_y -= lerpf(0.035, 0.05, run) * spread + lerpf(0.0, 0.04, run)
+		var duty := lerpf(WALK_DUTY, RUN_DUTY, run)
+		var cycle := stride / speed
+		_phase = fmod(_phase + delta / cycle, 1.0)
+		for side in ["l", "r"]:
+			_gait_foot(side, fmod(_phase + (0.0 if side == "l" else 0.5), 1.0), duty, cycle, flat_vel, run)
+		hips_target -= lerpf(0.0, 0.05, run)
 		lean = -lerpf(0.04, 0.2, run)
-		spine_twist = 0.12 * sin(p) * lerpf(1.0, 0.6, run)
-		target["neck"] = -lean * 0.7
+		spine_twist = 0.12 * sin(_phase * TAU) * lerpf(1.0, 0.6, run)
+		_pose["neck"] = lerpf(_pose["neck"], -lean * 0.7, t)
+		_pose["spine"] = lerpf(_pose["spine"], 0.0, t)
 
-	var t := clampf(delta * 12.0, 0.0, 1.0)
-	for j in _pose:
-		_pose[j] = lerpf(_pose[j], target[j], t)
-		if j == "spine":
-			continue  # set below together with lean and twist
-		var node: Node3D = joints[j]
-		node.rotation.x = _pose[j]
-	_hips_y = lerpf(_hips_y, hips_y, t)
-	joints["hips"].position.y = _hips_y
+	# Pelvis: as high as wanted, but never so high a foot can't reach.
+	var hips: Node3D = joints["hips"]
+	var hips_max := _max_reachable_hips_y()
+	# Floor: past this a foot is simply out of reach (sudden turn/stop) and
+	# the IK clamps rather than the body crouching to the ground.
+	_hips_y = maxf(minf(lerpf(_hips_y, hips_target, t), hips_max), HIP_HEIGHT - 0.16)
+	hips.position.y = _hips_y
 	var spine: Node3D = joints["spine"]
-	spine.rotation.x = lerpf(spine.rotation.x, lean + target["spine"], t)
+	spine.rotation.x = lerpf(spine.rotation.x, lean + _pose["spine"], t)
 	spine.rotation.y = lerpf(spine.rotation.y, spine_twist, t)
-	joints["hips"].rotation.y = -spine.rotation.y * 0.5
+	hips.rotation = Vector3(0.0, -spine.rotation.y * 0.5, 0.0)
+	joints["neck"].rotation.x = _pose["neck"]
+
+	for side in ["l", "r"]:
+		var thigh := _solve_leg(side)
+		arm_target["r" if side == "l" else "l"] = -thigh
+
+	# Arms counter-swing with the opposite leg.
+	for side in ["l", "r"]:
+		var swing: float = arm_target[side] * lerpf(0.75, 0.7, run) if speed >= IDLE_SPEED else 0.0
+		_pose["shoulder_" + side] = lerpf(_pose["shoulder_" + side], swing, t)
+		var elbow := lerpf(0.2, 1.5, run) if speed >= IDLE_SPEED else 0.12
+		_pose["elbow_" + side] = lerpf(_pose["elbow_" + side], elbow, t)
+		joints["shoulder_" + side].rotation.x = _pose["shoulder_" + side]
+		joints["elbow_" + side].rotation.x = _pose["elbow_" + side]
+
+
+## Updates one foot's target for walking/running. u: 0..1 position in the
+## gait cycle; [0, duty) is stance, [duty, 1) swing.
+func _gait_foot(side: String, u: float, duty: float, cycle: float, vel: Vector3, run: float) -> void:
+	var f: Dictionary = _feet[side]
+	var ground := global_position.y + ANKLE
+	if u < duty:
+		if not f["planted"]:
+			f["planted"] = true  # touchdown: lock where the swing ended
+			f["pos"].y = ground
+		# Late stance: heel peels off while the ball of the foot stays down.
+		var q := u / duty
+		f["pitch"] = smoothstep(0.55, 1.0, q) * TOE_OFF_PITCH
+		if q < 0.12:
+			f["pitch"] = -0.2 * (1.0 - q / 0.12) * (1.0 - run)  # heel strike, toes up
+		f["lift"] = _pivot_lift(f["pitch"])
+	else:
+		if f["planted"]:
+			f["planted"] = false
+			f["from"] = f["pos"]
+		var s := (u - duty) / (1.0 - duty)
+		# Land half a stance ahead of where the body will be at touchdown.
+		var remaining := (1.0 - s) * (1.0 - duty) * cycle
+		var land := global_position + vel * (remaining + duty * cycle * 0.5) + _rest_offset(side)
+		land.y = ground
+		var p: Vector3 = (f["from"] as Vector3).lerp(land, smoothstep(0.0, 1.0, s))
+		p.y = ground + sin(PI * s) * lerpf(SWING_LIFT, SWING_LIFT * 2.2, run)
+		f["pos"] = p
+		f["pitch"] = lerpf(TOE_OFF_PITCH, 0.0, smoothstep(0.0, 0.6, s)) - 0.15 * smoothstep(0.6, 1.0, s)
+		f["lift"] = _pivot_lift(f["pitch"])
+
+
+## Standing still: step any foot that ended up away from its rest spot
+## (stopping mid-stride, turning on the spot), one foot at a time.
+func _settle_feet(delta: float) -> void:
+	for side in ["l", "r"]:
+		var f: Dictionary = _feet[side]
+		f["pitch"] = lerpf(f["pitch"], 0.0, clampf(delta * 10.0, 0.0, 1.0))
+		f["lift"] = _pivot_lift(f["pitch"])
+		if f["settle"] >= 0.0:
+			f["settle"] += delta / SETTLE_TIME
+			var s := minf(f["settle"], 1.0)
+			var rest := _rest_world(side)
+			var p: Vector3 = (f["from"] as Vector3).lerp(rest, smoothstep(0.0, 1.0, s))
+			p.y = rest.y + sin(PI * s) * SWING_LIFT
+			f["pos"] = p
+			f["planted"] = false
+			if s >= 1.0:
+				f["settle"] = -1.0
+				f["planted"] = true
+			return  # one foot steps at a time
+	for side in ["l", "r"]:
+		var f: Dictionary = _feet[side]
+		var rest := _rest_world(side)
+		var off := Vector2(f["pos"].x - rest.x, f["pos"].z - rest.z).length()
+		if off > SETTLE_DISTANCE or not f["planted"]:
+			f["settle"] = 0.0
+			f["from"] = f["pos"]
+			return
+
+
+## How far the ankle must rise so a foot pitched by `pitch` rests on its
+## ball (toes down, +) or heel (toes up, -) instead of cutting into the floor.
+func _pivot_lift(pitch: float) -> float:
+	var arm := FOOT_BALL if pitch > 0.0 else FOOT_HEEL
+	return arm * sin(absf(pitch)) - ANKLE * (1.0 - cos(pitch))
+
+
+func _cancel_settle() -> void:
+	for side in ["l", "r"]:
+		var f: Dictionary = _feet[side]
+		if f["settle"] >= 0.0:
+			f["settle"] = -1.0
+			f["planted"] = false
+			f["from"] = f["pos"]
+
+
+func _rest_offset(side: String) -> Vector3:
+	return global_basis * Vector3(FOOT_SPREAD * (-1.0 if side == "l" else 1.0), 0.0, 0.0)
+
+
+func _rest_world(side: String) -> Vector3:
+	return global_position + _rest_offset(side) + Vector3(0.0, ANKLE, 0.0)
+
+
+func _reset_feet() -> void:
+	for side in ["l", "r"]:
+		_feet[side] = {
+			"pos": _rest_world(side), "from": _rest_world(side), "planted": true,
+			"lift": 0.0, "pitch": 0.0, "settle": -1.0,
+		}
+
+
+## False after a teleport (or before the first frame): planted feet are
+## nowhere near the body.
+func _feet_valid() -> bool:
+	if _feet.is_empty():
+		return false
+	for side in ["l", "r"]:
+		var p: Vector3 = _feet[side]["pos"]
+		if Vector2(p.x - global_position.x, p.z - global_position.z).length() > 1.5 \
+				or absf(p.y - global_position.y) > 1.0:
+			return false
+	return true
+
+
+## Ankle target in the hips' local space, including heel lift.
+func _target_local(side: String) -> Vector3:
+	var f: Dictionary = _feet[side]
+	var world: Vector3 = f["pos"] + Vector3(0.0, f["lift"], 0.0)
+	return joints["hips"].get_parent().global_transform.affine_inverse() * world
+
+
+## Highest pelvis (model space) from which both ankle targets are reachable
+## with the knee very slightly bent.
+func _max_reachable_hips_y() -> float:
+	var reach := (THIGH + SHIN) * 0.985
+	var best := HIP_HEIGHT
+	for side in ["l", "r"]:
+		var tgt := _target_local(side)
+		var hip_x := FOOT_SPREAD * (-1.0 if side == "l" else 1.0)
+		var horiz := Vector2(tgt.x - hip_x, tgt.z).length()
+		if horiz >= reach:
+			best = minf(best, tgt.y + HIP_DROP + 0.05)
+			continue
+		best = minf(best, tgt.y + sqrt(reach * reach - horiz * horiz) + HIP_DROP)
+	return best
+
+
+## Two-bone IK for one leg. Returns the thigh swing angle (for arm swing).
+func _solve_leg(side: String) -> float:
+	var hips: Node3D = joints["hips"]
+	var hip: Node3D = joints["hip_" + side]
+	var knee: Node3D = joints["knee_" + side]
+	var ankle: Node3D = joints["ankle_" + side]
+	var d: Vector3 = hips.global_transform.affine_inverse() * (_feet[side]["pos"] + Vector3(0.0, _feet[side]["lift"], 0.0)) - hip.position
+
+	# Roll the leg plane sideways so it contains the target, then solve in it.
+	var roll := clampf(atan2(d.x, -d.y), -0.35, 0.35)
+	var in_plane := Basis(Vector3.BACK, -roll) * d
+	var dist := clampf(in_plane.length(), absf(THIGH - SHIN) + 0.01, THIGH + SHIN - 0.0005)
+	var to_target := atan2(-in_plane.z, -in_plane.y)
+	var cos_alpha := (THIGH * THIGH + dist * dist - SHIN * SHIN) / (2.0 * THIGH * dist)
+	var cos_knee := (THIGH * THIGH + SHIN * SHIN - dist * dist) / (2.0 * THIGH * SHIN)
+	var thigh := to_target + acos(clampf(cos_alpha, -1.0, 1.0))
+	var bend := -(PI - acos(clampf(cos_knee, -1.0, 1.0)))
+
+	hip.basis = Basis(Vector3.BACK, roll) * Basis(Vector3.RIGHT, thigh)
+	knee.basis = Basis(Vector3.RIGHT, bend)
+	# Foot flat to the hips (i.e. to the ground), plus heel/toe pitch.
+	ankle.basis = Basis(Vector3.RIGHT, -(thigh + bend)) * Basis(Vector3.BACK, -roll) \
+		* Basis(Vector3.RIGHT, -_feet[side]["pitch"])  # +pitch = toes down
+	_pose["hip_" + side] = thigh
+	_pose["knee_" + side] = bend
+	return thigh
+
+
+## Airborne: knees up while rising, legs reaching down while falling.
+func _air_pose(vertical_speed: float, t: float) -> void:
+	var rising := clampf(vertical_speed / 4.0, -1.0, 1.0)
+	var target := {
+		"hip_l": 0.55 + 0.25 * rising, "knee_l": -1.0 - 0.3 * rising,
+		"hip_r": 0.1, "knee_r": -0.5, "ankle_l": 0.0, "ankle_r": 0.0,
+		"shoulder_l": -0.4, "shoulder_r": 0.5, "elbow_l": 0.6, "elbow_r": 0.6,
+		"neck": 0.0, "spine": 0.0,
+	}
+	for j in target:
+		_pose[j] = lerpf(_pose[j], target[j], t)
+		if j != "spine":
+			var roll := 0.0
+			if j.begins_with("shoulder"):
+				roll = SHOULDER_ROLL * (-1.0 if j.ends_with("_l") else 1.0)
+			(joints[j] as Node3D).rotation = Vector3(_pose[j], 0.0, roll)
+	var spine: Node3D = joints["spine"]
+	spine.rotation.x = lerpf(spine.rotation.x, -0.1, t)
+	_hips_y = lerpf(_hips_y, HIP_HEIGHT, t)
+	joints["hips"].position.y = _hips_y
 
 
 # --- Construction helpers --------------------------------------------------
