@@ -848,6 +848,14 @@ func test_gameplay() -> void:
 	check(world.distance_to(there) < 0.5, "full-map click maps back to world (%s)" % world)
 	mm.clear_waypoint()
 	check(not mm.has_waypoint and mm.gps_distance() < 0.0, "waypoint cleared")
+	# Pause menu pauses the tree and can set the time of day.
+	main.pause_menu.toggle()
+	check(main.pause_menu.open and paused, "Esc pauses the game")
+	main.pause_menu.time_chosen.emit(23.0)
+	check(absf(main.daylight.hour - 23.0) < 0.01, "menu sets the time of day")
+	main.pause_menu.toggle()
+	check(not main.pause_menu.open and not paused, "resume unpauses")
+	main.daylight.hour = 10.0
 	# HUD banner shows the street you're on.
 	main.overlay.update(0.5, {"street": "Main Street", "clock": "10:00", "driving": true, "speed_ms": 10.0})
 	check(main.overlay.banner.text == "Main Street" and main.overlay.banner.modulate.a > 0.9, "street banner fades in")

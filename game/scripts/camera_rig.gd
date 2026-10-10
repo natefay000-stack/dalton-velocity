@@ -54,6 +54,20 @@ func _process(delta: float) -> void:
 	if target == null or not is_instance_valid(target):
 		return
 	_idle_mouse_time += delta
+	# Right stick look.
+	var stick := Vector2(Input.get_joy_axis(0, JOY_AXIS_RIGHT_X), Input.get_joy_axis(0, JOY_AXIS_RIGHT_Y))
+	if stick.length() > 0.15:
+		yaw -= stick.x * delta * 2.6
+		pitch = clampf(pitch - stick.y * delta * 1.8, -1.2, 0.5)
+		_idle_mouse_time = 0.0
+	# Field of view opens up with speed for a sense of pace.
+	var speed := 0.0
+	if target is RigidBody3D:
+		speed = target.linear_velocity.length()
+	elif target is CharacterBody3D:
+		speed = target.velocity.length()
+	var fov_target := 70.0 + clampf(speed / 30.0, 0.0, 1.0) * 14.0
+	_camera.fov = lerpf(_camera.fov, fov_target, clampf(delta * 3.0, 0.0, 1.0))
 	if auto_align and _idle_mouse_time > 1.0 and target is RigidBody3D:
 		var vel: Vector3 = target.linear_velocity
 		if Vector2(vel.x, vel.z).length() > 2.0:

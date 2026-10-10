@@ -23,6 +23,7 @@ const Daylight := preload("res://scripts/daylight.gd")
 const Minimap := preload("res://scripts/minimap.gd")
 const Hud := preload("res://scripts/hud.gd")
 const GameAudio := preload("res://scripts/audio.gd")
+const PauseMenu := preload("res://scripts/pause_menu.gd")
 const Ortho := preload("res://scripts/ortho.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
@@ -36,6 +37,7 @@ var rig: Node3D
 var hud: Label  # the hint lines (kept for tools); the overlay is `overlay`
 var overlay: CanvasLayer
 var audio: Node
+var pause_menu: CanvasLayer
 var in_car := false
 var map_bounds := Rect2()
 var terrain: Terrain = null
@@ -143,6 +145,10 @@ func _ready() -> void:
 	audio = GameAudio.new()
 	audio.name = "Audio"
 	add_child(audio)
+	pause_menu = PauseMenu.new()
+	pause_menu.name = "PauseMenu"
+	add_child(pause_menu)
+	pause_menu.time_chosen.connect(func(h: float) -> void: daylight.hour = h)
 	if map_bounds.size.x > 0.0:
 		minimap = Minimap.new()
 		minimap.name = "Minimap"
@@ -185,7 +191,7 @@ func _setup_input() -> void:
 		"interact": [KEY_E, KEY_F],
 		"reset_vehicle": [KEY_R],
 		"toggle_map": [KEY_M],
-		"toggle_mouse": [KEY_ESCAPE],
+		"pause": [KEY_ESCAPE],
 		"time_back": [KEY_BRACKETLEFT],
 		"time_forward": [KEY_BRACKETRIGHT],
 		"horn": [KEY_H],
@@ -197,6 +203,26 @@ func _setup_input() -> void:
 			var ev := InputEventKey.new()
 			ev.physical_keycode = key
 			InputMap.action_add_event(action, ev)
+	# Gamepad: left stick / triggers drive and move, buttons as listed in the menu.
+	var buttons := {"jump": JOY_BUTTON_A, "interact": JOY_BUTTON_X, "horn": JOY_BUTTON_Y,
+		"pause": JOY_BUTTON_START, "toggle_map": JOY_BUTTON_BACK, "reset_vehicle": JOY_BUTTON_RIGHT_SHOULDER,
+		"sprint": JOY_BUTTON_LEFT_SHOULDER}
+	for action in buttons:
+		var ev := InputEventJoypadButton.new()
+		ev.button_index = buttons[action]
+		InputMap.action_add_event(action, ev)
+	var axes := {"move_left": [JOY_AXIS_LEFT_X, -1.0], "move_right": [JOY_AXIS_LEFT_X, 1.0],
+		"move_forward": [JOY_AXIS_LEFT_Y, -1.0], "move_back": [JOY_AXIS_LEFT_Y, 1.0]}
+	for action in axes:
+		var ev := InputEventJoypadMotion.new()
+		ev.axis = axes[action][0]
+		ev.axis_value = axes[action][1]
+		InputMap.action_add_event(action, ev)
+	for pair in [["move_forward", JOY_AXIS_TRIGGER_RIGHT], ["move_back", JOY_AXIS_TRIGGER_LEFT]]:
+		var ev := InputEventJoypadMotion.new()
+		ev.axis = pair[1]
+		ev.axis_value = 1.0
+		InputMap.action_add_event(pair[0], ev)
 
 
 func _setup_environment() -> void:
@@ -220,9 +246,10 @@ func _build_hud() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("toggle_mouse"):
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE \
-			if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
+	if event.is_action_pressed("pause"):
+		pause_menu.toggle()
+	elif pause_menu.open:
+		return
 	elif event is InputEventMouseButton and event.pressed and not (minimap != null and minimap.full_open):
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	elif event.is_action_pressed("interact"):
@@ -294,10 +321,10 @@ func _process(delta: float) -> void:
 		"gps_m": minimap.gps_distance() if minimap != null else -1.0,
 	}
 	if in_car:
-		state["hints"] = "W/S throttle/brake   A/D steer   Space handbrake   R reset   E exit   M map"
+		state["hints"] = "W/S throttle/brake   A/D steer   Space handbrake   H horn   R reset   E exit   M map   Esc menu"
 		state["prompt"] = ""
 	else:
-		state["hints"] = "WASD move   Shift sprint   Ctrl walk   Space jump   Mouse look   M map   Esc release mouse"
+		state["hints"] = "WASD move   Shift sprint   Ctrl walk   Space jump   Mouse look   M map   Esc menu"
 		state["prompt"] = "Press E to drive" if p.distance_to(car.global_position) < ENTER_DISTANCE else ""
 	overlay.update(delta, state)
 	audio.state = {

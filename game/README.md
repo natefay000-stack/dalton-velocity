@@ -129,14 +129,17 @@ Mixamo exports (both cm/+Z and m/−Z conventions).
 
 | On foot | In car |
 |---|---|
-| WASD / arrows — move (camera-relative) | W / S — throttle, brake, reverse |
-| Shift — sprint, Ctrl — walk, Space — jump |
-| M — full map (minimap is always in the corner) | |
-| [ / ] — time of day back / forward an hour | | A / D — steer, Space — handbrake |
-| Mouse — look | R — flip upright |
-| E / F near the car — get in | E / F — get out (below ~20 km/h) |
+| WASD / arrows / left stick — move (camera-relative) | W / S / triggers — throttle, brake, reverse |
+| Shift — sprint, Ctrl — walk, Space / A — jump | A / D / left stick — steer, Space / A — handbrake |
+| Mouse / right stick — look | H / Y — horn, R — flip upright |
+| E / F / X near the car — get in | E / F / X — get out (below ~20 km/h) |
 
-Esc releases the mouse; click to recapture.
+M (Back on a pad) opens the full map; click sets a GPS waypoint, right
+click clears it, and the route is drawn on the minimap. [ / ] shift the
+time of day an hour. Esc (Start) pauses: resume, controls, jump to dawn,
+noon, dusk or night, quit. The HUD shows the street you are on when you
+turn onto it, your speed while driving, the clock and the distance left
+to the waypoint.
 
 ## Layout
 
