@@ -50,7 +50,7 @@ func test_sample_parse() -> void:
 	var d := OsmData.new()
 	check(d.parse_file("res://maps/sample.osm") == OK, "sample.osm parses")
 	check(d.points.size() == 567, "all 567 nodes projected (got %d)" % d.points.size())
-	check(d.ways.size() == 140, "all 140 ways read (got %d)" % d.ways.size())
+	check(d.ways.size() == 170, "all 170 ways read (got %d)" % d.ways.size())
 	# Grid is 4 x 110 m blocks centred on the origin.
 	# Grid is 440 m; the declared <bounds> adds a 60 m margin each side.
 	check(absf(d.bounds.size.x - 560.0) < 1.0, "east-west extent from <bounds> ~560 m (got %.2f)" % d.bounds.size.x)
@@ -62,7 +62,7 @@ func test_sample_parse() -> void:
 
 	var b := MapBuilder.new()
 	var root := b.build(d)
-	check(b.stats["roads"] == 11, "10 streets + 1 footway (got %d)" % b.stats["roads"])
+	check(b.stats["roads"] == 41, "10 streets in 4 blocks each + 1 footway (got %d)" % b.stats["roads"])
 	check(b.stats["buildings"] == 127, "120 houses + 7 L-shaped blocks (got %d)" % b.stats["buildings"])
 	check(b.stats["areas"] == 2, "park + pond (got %d)" % b.stats["areas"])
 	check(b.stats["skipped"] == 0, "nothing skipped")
@@ -418,6 +418,15 @@ func test_props() -> void:
 	root.add_child(node)
 	check(props.stats["trees"] > 60 and props.stats["parked"] > 20 and props.stats["lights"] > 10,
 		"props placed: %s" % props.stats)
+	check(props.stats["mailboxes"] > 30 and props.stats["fence_panels"] > 200, "mailboxes and fences placed (%d, %d)" % [props.stats["mailboxes"], props.stats["fence_panels"]])
+	check(props.stats["stop_signs"] >= 8, "stop signs at the primary/secondary crossings (%d)" % props.stats["stop_signs"])
+	var fence_bad := 0
+	for xf in props.instances.get("fence", []):
+		var o: Vector3 = xf.origin
+		if b.occupancy.get_at(o.x, o.z) & (Occupancy.ROAD | Occupancy.BUILDING | Occupancy.DRIVEWAY):
+			fence_bad += 1
+	check(fence_bad == 0, "no fence post on a road, house or driveway (%d)" % fence_bad)
+	check(b.stats.get("walks", 0) > 60, "front walks laid (%d)" % b.stats.get("walks", 0))
 	# Nothing may stand on a road, in a house or in the pond; cars must be
 	# on pavement (street or driveway).
 	var bad_trees := 0
@@ -528,15 +537,15 @@ func test_gameplay() -> void:
 	Input.action_release("move_forward")
 	check(player.global_position.distance_to(start) > 2.0, "player walks (moved %.1f m)" % player.global_position.distance_to(start))
 
-	# Walk north into the first house of the NW block; its south wall is
-	# somewhere in z = [-199, -189] for x in [-211, -192].
-	main.rig.yaw = 0.0
-	player.global_position = Vector3(-201, 0.1, -180)
+	# Walk south from the street into the front wall of the first house of
+	# the NW block (its north wall is at z = -211, x in [-211, -192]).
+	main.rig.yaw = PI
+	player.global_position = Vector3(-201, 0.1, -216)
 	Input.action_press("move_forward")
 	for i in 600:
 		await physics_frame
 	Input.action_release("move_forward")
-	check(player.global_position.z > -199.0 and player.global_position.z < -185.0, "wall stops player (z=%.1f)" % player.global_position.z)
+	check(player.global_position.z > -212.0 and player.global_position.z < -209.5, "wall stops player (z=%.1f)" % player.global_position.z)
 
 	# Teleport next to the car, get in, drive.
 	player.global_position = car.global_position + car.global_basis * Vector3(-2.5, 0.2, 0)

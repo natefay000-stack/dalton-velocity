@@ -104,6 +104,12 @@ var building_list: Array[Dictionary] = []
 ## {ring, kind} for parks, grass, forest etc. (not water).
 var area_list: Array[Dictionary] = []
 var _driveways: Array[PackedVector2Array] = []
+var _walks: Array = []  # [door point, outward dir]
+var _paving: SurfaceTool
+var _bricks: SurfaceTool
+var _roofs: SurfaceTool
+var _trim: SurfaceTool
+const BRICK_PALETTE := [Color(0.62, 0.32, 0.24), Color(0.70, 0.45, 0.34), Color(0.55, 0.30, 0.25), Color(0.75, 0.62, 0.50)]
 
 
 func build(data: OsmData, terrain: Terrain = null) -> Node3D:
@@ -112,14 +118,14 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Map"
 
-	var roads := SurfaceTool.new()
-	roads.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var areas := SurfaceTool.new()
-	areas.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var water := SurfaceTool.new()
-	water.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var buildings := SurfaceTool.new()
-	buildings.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var roads := _st()
+	_paving = _st()
+	var areas := _st()
+	var water := _st()
+	var buildings := _st()  # plain walls
+	_bricks = _st()
+	_roofs = _st()
+	_trim = _st()
 
 	# Pass 1: areas (and, with terrain, building yards) shape and paint the
 	# ground before anything is draped onto it.
@@ -208,17 +214,42 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 
 	# Driveways from garages to the street (the data rarely has them).
 	for dw in _driveways:
-		_add_ribbon(roads, _subdivide(dw, DRAPE_STEP) if _terrain != null else dw, DRIVEWAY_WIDTH, SIDEWALK_Y - 0.02, COLOR_SIDEWALK.darkened(0.06))
+		_add_ribbon(_paving, _subdivide(dw, DRAPE_STEP) if _terrain != null else dw, DRIVEWAY_WIDTH, SIDEWALK_Y - 0.02, COLOR_SIDEWALK.darkened(0.06))
 		occupancy.mark_polyline(dw, DRIVEWAY_WIDTH * 0.5 + 0.5, Occupancy.DRIVEWAY)
 		road_list.append({"pts": dw, "highway": "service", "width": DRIVEWAY_WIDTH, "name": "", "service": "driveway"})
 		stats["driveways"] = stats.get("driveways", 0) + 1
+	# Front steps and a walk from each front door to the driveway/sidewalk.
+	for w in _walks:
+		var from: Vector2 = w[0]
+		var out2: Vector2 = w[1]
+		_add_ribbon(_paving, PackedVector2Array([from - out2 * 0.1, from + out2 * 1.1]), 1.7, SIDEWALK_Y + 0.06, COLOR_SIDEWALK)
+		var d := 1.0
+		while d < 25.0:
+			var p := from + out2 * d
+			var cell := occupancy.get_at(p.x, p.y)
+			if cell & (Occupancy.DRIVEWAY | Occupancy.PATH | Occupancy.ROAD):
+				var walk := PackedVector2Array([from + out2 * 1.0, p])
+				_add_ribbon(_paving, _subdivide(walk, DRAPE_STEP) if _terrain != null else walk, 1.0, SIDEWALK_Y - 0.03, COLOR_SIDEWALK)
+				occupancy.mark_polyline(walk, 0.8, Occupancy.PATH)
+				stats["walks"] = stats.get("walks", 0) + 1
+				break
+			if cell & (Occupancy.BUILDING | Occupancy.WATER):
+				break
+			d += 1.0
 
 	root.add_child(_terrain.build_node() if _terrain != null else make_ground(data.bounds))
 	_attach(root, "Areas", areas, false, "ground")
-	_attach(root, "Roads", roads, false, "asphalt")
+	_attach(root, "Roads", roads, false, "road")
+	_attach(root, "Paving", _paving, false, "concrete")
 	_attach_water(root, water)
-	_attach(root, "Buildings", buildings, true, "stucco")
+	_attach_multi(root, "Buildings", [[buildings, "stucco", true], [_bricks, "brick", true], [_roofs, "shingle", true], [_trim, "", false]])
 	return root
+
+
+func _st() -> SurfaceTool:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	return st
 
 
 func _ground(x: float, z: float) -> float:
@@ -377,21 +408,24 @@ func _add_road(st: SurfaceTool, pts: PackedVector2Array, hw: String, width: floa
 		pts = _subdivide(pts, DRAPE_STEP)
 	if hw in FOOT_TYPES:
 		var concrete := hw in ["footway", "pedestrian", "steps"]
-		_add_ribbon(st, pts, width, SIDEWALK_Y if concrete else 0.09, COLOR_SIDEWALK if concrete else COLOR_PATH)
+		_add_ribbon(_paving, pts, width, SIDEWALK_Y if concrete else 0.09, COLOR_SIDEWALK if concrete else COLOR_PATH)
 		return
-	_add_ribbon(st, pts, width, ROAD_Y, COLOR_ROAD)
+	if hw == "service":
+		_add_ribbon(_paving, pts, width, ROAD_Y, COLOR_ROAD.lightened(0.15))
+		return
+	_add_ribbon(st, pts, width, ROAD_Y, COLOR_ROAD, true)
 	var half := width * 0.5
 	if hw in CURB_TYPES:
 		for side in [-1.0, 1.0]:
 			var inner := _offset_polyline(pts, side * half)
 			var outer := _offset_polyline(pts, side * (half + CURB_WIDTH))
-			_add_strip(st, inner, outer, ROAD_Y, ROAD_Y + CURB_HEIGHT, COLOR_CURB)
+			_add_strip(_paving, inner, outer, ROAD_Y, ROAD_Y + CURB_HEIGHT, COLOR_CURB)
 	if hw in CENTER_LINE_TYPES:
 		for side in [-1.0, 1.0]:
-			_add_ribbon(st, _offset_polyline(pts, side * 0.12), 0.1, MARKING_Y, COLOR_LANE_YELLOW)
+			_add_ribbon(_paving, _offset_polyline(pts, side * 0.12), 0.1, MARKING_Y, COLOR_LANE_YELLOW)
 	if hw in EDGE_LINE_TYPES:
 		for side in [-1.0, 1.0]:
-			_add_ribbon(st, _offset_polyline(pts, side * (half - 0.35)), 0.1, MARKING_Y, COLOR_LANE_WHITE)
+			_add_ribbon(_paving, _offset_polyline(pts, side * (half - 0.35)), 0.1, MARKING_Y, COLOR_LANE_WHITE)
 
 
 ## Polyline shifted sideways by `offset` (positive = left of travel),
@@ -433,12 +467,18 @@ func _add_strip(st: SurfaceTool, a: PackedVector2Array, b: PackedVector2Array, y
 
 ## Flat strip along a polyline, mitred at joints (miter length clamped so
 ## sharp corners don't spike).
-func _add_ribbon(st: SurfaceTool, pts: PackedVector2Array, width: float, y: float, color: Color) -> void:
+## With `uv`, U runs 0..1 across the strip and V along it in tile units.
+func _add_ribbon(st: SurfaceTool, pts: PackedVector2Array, width: float, y: float, color: Color, uv: bool = false) -> void:
 	var half := width * 0.5
 	var left := PackedVector3Array()
 	var right := PackedVector3Array()
+	var along := PackedFloat32Array()
 	var n := pts.size()
+	var dist := 0.0
 	for i in n:
+		if i > 0:
+			dist += pts[i].distance_to(pts[i - 1])
+		along.append(dist / Surfaces.TILE_M)
 		var d_in := (pts[i] - pts[i - 1]).normalized() if i > 0 else Vector2.ZERO
 		var d_out := (pts[i + 1] - pts[i]).normalized() if i < n - 1 else Vector2.ZERO
 		var d := (d_in + d_out)
@@ -459,8 +499,12 @@ func _add_ribbon(st: SurfaceTool, pts: PackedVector2Array, width: float, y: floa
 	for i in n - 1:
 		if pts[i].distance_squared_to(pts[i + 1]) < 1e-6:
 			continue
-		_tri_up(st, left[i], right[i], right[i + 1], color)
-		_tri_up(st, left[i], right[i + 1], left[i + 1], color)
+		if uv:
+			_tri_up(st, left[i], right[i], right[i + 1], color, Vector2(0, along[i]), Vector2(1, along[i]), Vector2(1, along[i + 1]))
+			_tri_up(st, left[i], right[i + 1], left[i + 1], color, Vector2(0, along[i]), Vector2(1, along[i + 1]), Vector2(0, along[i + 1]))
+		else:
+			_tri_up(st, left[i], right[i], right[i + 1], color)
+			_tri_up(st, left[i], right[i + 1], left[i + 1], color)
 
 
 ## Splits long segments so draped geometry follows the terrain.
@@ -477,30 +521,36 @@ func _subdivide(pts: PackedVector2Array, step: float) -> PackedVector2Array:
 
 
 ## Triangle facing upward (for ground-hugging surfaces on slopes).
-func _tri_up(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, color: Color) -> void:
+func _tri_up(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, color: Color, uva := Vector2.ZERO, uvb := Vector2.ZERO, uvc := Vector2.ZERO) -> void:
 	var n := (b - a).cross(c - a)
 	if n.length_squared() < 1e-12:
 		return
 	n = n.normalized()
-	_tri(st, a, b, c, n if n.y >= 0.0 else -n, color)
+	_tri(st, a, b, c, n if n.y >= 0.0 else -n, color, uva, uvb, uvc)
 
 
 ## Adds a triangle whose front face points along `normal`, whatever order
 ## the vertices arrive in. Godot treats clockwise winding (seen from the
 ## front) as front-facing, i.e. (b-a)x(c-a) points away from the viewer.
-func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, normal: Vector3, color: Color) -> void:
+func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, normal: Vector3, color: Color, uva := Vector2.ZERO, uvb := Vector2.ZERO, uvc := Vector2.ZERO) -> void:
 	if (b - a).cross(c - a).dot(normal) > 0.0:
 		var t := b
 		b = c
 		c = t
+		var tu := uvb
+		uvb = uvc
+		uvc = tu
 	st.set_color(color)
 	st.set_normal(normal)
+	st.set_uv(uva)
 	st.add_vertex(a)
 	st.set_color(color)
 	st.set_normal(normal)
+	st.set_uv(uvb)
 	st.add_vertex(b)
 	st.set_color(color)
 	st.set_normal(normal)
+	st.set_uv(uvc)
 	st.add_vertex(c)
 
 
@@ -565,6 +615,11 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 	var y1: float = hs[1] + (g_mean if _terrain != null else 0.0)
 	var color: Color = BUILDING_PALETTE[absi(hash(id)) % BUILDING_PALETTE.size()]
 	var base := g_mean if _terrain != null else 0.0
+	# A quarter of the houses are brick.
+	var brick: bool = absi(hash(id * 7 + 3)) % 4 == 0 and hs[1] < 12.0
+	if brick:
+		color = BRICK_PALETTE[absi(hash(id)) % BRICK_PALETTE.size()]
+		st = _bricks
 
 	# House-sized, roughly rectangular footprints get a pitched roof (hip or
 	# gable); walls stop at the eaves and the height tag is treated as the
@@ -613,7 +668,7 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 			_tri(st, a1, b1, Vector3(m.x, ridge, m.y), normal, shade)
 		var ground_here := maxf(_ground(a.x, a.y), _ground(b.x, b.y)) if _terrain != null else 0.0
 		if hs[0] <= 0.0 and facades:
-			var garage_at := _add_facade(st, a, b, out2, ground_here, y1, i == front, color)
+			var garage_at := _add_facade(_trim, a, b, out2, ground_here, y1, i == front, color)
 			if garage_at >= 0.0:
 				var dw := _driveway(a + (b - a).normalized() * garage_at, out2)
 				if not dw.is_empty():
@@ -622,18 +677,19 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 			building_list[building_list.size() - 1]["front_dir"] = out2
 
 	if not hip.is_empty():
-		_add_hip_roof(st, hip, y1, ridge, ROOF_PALETTE[absi(hash(id + 7)) % ROOF_PALETTE.size()], gable)
+		_add_hip_roof(_roofs, hip, y1, ridge, ROOF_PALETTE[absi(hash(id + 7)) % ROOF_PALETTE.size()], gable)
 		return true
 
-	# Flat roof. If triangulation fails (self-intersecting footprint) we
-	# still keep the walls.
+	# Flat roof (gravel/membrane; world-mapped UVs). If triangulation fails
+	# (self-intersecting footprint) we still keep the walls.
 	var idx := Geometry2D.triangulate_polygon(ring)
-	var roof := color.darkened(0.35)
+	var roof := Color(0.55, 0.53, 0.50)
 	for t in range(0, idx.size(), 3):
 		var p := ring[idx[t]]
 		var q := ring[idx[t + 1]]
 		var r := ring[idx[t + 2]]
-		_tri(st, Vector3(p.x, y1, p.y), Vector3(q.x, y1, q.y), Vector3(r.x, y1, r.y), Vector3.UP, roof)
+		_tri(_roofs, Vector3(p.x, y1, p.y), Vector3(q.x, y1, q.y), Vector3(r.x, y1, r.y), Vector3.UP, roof,
+			p / Surfaces.TILE_M, q / Surfaces.TILE_M, r / Surfaces.TILE_M)
 	return true
 
 
@@ -701,14 +757,26 @@ func _add_hip_roof(st: SurfaceTool, hip: Dictionary, eave: float, ridge: float, 
 	var r1 := Vector3((c + u * ridge_half).x, ridge, (c + u * ridge_half).y)
 	var r2 := Vector3((c - u * ridge_half).x, ridge, (c - u * ridge_half).y)
 	var dark := color.darkened(0.15)
+	# Shingle rows run parallel to the eave: texture V is the up-slope
+	# coordinate (across v for the long sides, across u for the hip ends).
+	var uv_long := func(p: Vector3) -> Vector2:
+		var q := Vector2(p.x, p.z) - c
+		return Vector2(q.dot(u), q.dot(v)) / Surfaces.TILE_M
+	var uv_end := func(p: Vector3) -> Vector2:
+		var q := Vector2(p.x, p.z) - c
+		return Vector2(q.dot(v), q.dot(u)) / Surfaces.TILE_M
 	# Long sides (trapezoids) and hip ends (triangles).
-	_tri_up(st, e.call(1, 1), e.call(-1, 1), r2, color)
-	_tri_up(st, e.call(1, 1), r2, r1, color)
-	_tri_up(st, e.call(-1, -1), e.call(1, -1), r1, dark)
-	_tri_up(st, e.call(-1, -1), r1, r2, dark)
+	var a1: Vector3 = e.call(1, 1)
+	var a2: Vector3 = e.call(-1, 1)
+	var b1: Vector3 = e.call(-1, -1)
+	var b2: Vector3 = e.call(1, -1)
+	_tri_up(st, a1, a2, r2, color, uv_long.call(a1), uv_long.call(a2), uv_long.call(r2))
+	_tri_up(st, a1, r2, r1, color, uv_long.call(a1), uv_long.call(r2), uv_long.call(r1))
+	_tri_up(st, b1, b2, r1, dark, uv_long.call(b1), uv_long.call(b2), uv_long.call(r1))
+	_tri_up(st, b1, r1, r2, dark, uv_long.call(b1), uv_long.call(r1), uv_long.call(r2))
 	if not gable:
-		_tri_up(st, e.call(1, -1), e.call(1, 1), r1, color.darkened(0.07))
-		_tri_up(st, e.call(-1, 1), e.call(-1, -1), r2, color.darkened(0.07))
+		_tri_up(st, b2, a1, r1, color.darkened(0.07), uv_end.call(b2), uv_end.call(a1), uv_end.call(r1))
+		_tri_up(st, a2, b1, r2, color.darkened(0.07), uv_end.call(a2), uv_end.call(b1), uv_end.call(r2))
 
 
 ## Index of the wall edge that faces the nearest road (-1 if none within
@@ -789,6 +857,7 @@ func _add_facade(st: SurfaceTool, a: Vector2, b: Vector2, out2: Vector2, ground:
 			if end - cursor >= 1.6:
 				var door_s := cursor + 0.6
 				place.call(door_s - 0.48, door_s + 0.48, y_base + 0.05, y_base + 2.1, COLOR_DOOR, 0.03)
+				_walks.append([a + dir * door_s + out2 * 0.05, out2])
 				cursor = door_s + 0.48 + 0.7
 		# Windows fill what's left, centred in equal bays.
 		var span := end - cursor
@@ -854,6 +923,41 @@ func _attach(root: Node3D, name: String, st: SurfaceTool, collide: bool, surface
 	# Non-indexed triangle list, so the vertex array is already the face list.
 	var shape := ConcavePolygonShape3D.new()
 	shape.set_faces(arrays[Mesh.ARRAY_VERTEX])
+	shape.backface_collision = true
+	var cs := CollisionShape3D.new()
+	cs.name = "CollisionShape3D"
+	cs.shape = shape
+	body.add_child(cs)
+	root.add_child(body)
+
+
+## Several surfaces in one mesh (one draw call each); collision is built
+## from the surfaces flagged for it.
+func _attach_multi(root: Node3D, name: String, parts: Array, collide: bool = true) -> void:
+	var mesh := ArrayMesh.new()
+	var faces := PackedVector3Array()
+	for part in parts:
+		var arrays: Array = (part[0] as SurfaceTool).commit_to_arrays()
+		if arrays[Mesh.ARRAY_VERTEX] == null or arrays[Mesh.ARRAY_VERTEX].is_empty():
+			continue
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		mesh.surface_set_material(mesh.get_surface_count() - 1, Surfaces.material(part[1]))
+		if part[2]:
+			faces.append_array(arrays[Mesh.ARRAY_VERTEX])
+	if mesh.get_surface_count() == 0:
+		return
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	if not collide or faces.is_empty():
+		mi.name = name
+		root.add_child(mi)
+		return
+	var body := StaticBody3D.new()
+	body.name = name
+	mi.name = "Mesh"
+	body.add_child(mi)
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
 	shape.backface_collision = true
 	var cs := CollisionShape3D.new()
 	cs.name = "CollisionShape3D"

@@ -10,6 +10,7 @@ const WATER := 4
 const PATH := 8
 const PROP := 16  # trees / street furniture already placed
 const DRIVEWAY := 32
+const FENCE := 64
 
 var rect := Rect2()
 var cols := 0

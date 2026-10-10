@@ -68,9 +68,14 @@ versioned.
 - **Traffic** (24 cars, `traffic_count`) driving the right-hand lane of the
   road network, slowing for bends and junctions, queueing behind whatever
   is ahead (including you) and pulling around parked cars.
-- **Surfaces**: procedural stucco, asphalt, concrete and ground textures with
-  normal maps, generated at startup and mapped in world space (no asset
-  files, no UVs).
+- **Surfaces**: procedural textures with normal maps generated at startup,
+  no asset files: stucco and brick walls (a quarter of houses are brick),
+  shingle rows on roofs that follow each roof plane, tyre-wear lanes along
+  roads, concrete paving, grainy ground.
+- **Street furniture**: mailboxes at driveways, stop signs where minor roads
+  meet bigger ones (and all-way at 4-way minor junctions), front steps and a
+  walk from each front door to the driveway, and vinyl backyard fences
+  around most houses.
 - **A visible driver** (your character) when you're in the car.
 
 Placement is seeded from the map file name, so a given map always looks the
@@ -144,8 +149,8 @@ cd game && python3 -m unittest discover -s tools
   cut into it.
 - Whole map is built at load time as a few merged meshes. Fine for a few km²;
   beyond that, chunk by tile and stream.
-- Textures are uniform grain; no brick courses, shingle rows or lane wear.
-  `surfaces.gd` is where to add patterned generators.
+- Fences are a fixed U behind each house (no real lot lines in the data), so
+  neighbours' fences sometimes run close together or stop short.
 - Traffic is kinematic: it stops for you but you can't shunt it, and it
   ignores pedestrians crossing the road (they don't cross; they keep to the
   footways).
