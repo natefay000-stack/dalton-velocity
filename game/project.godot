@@ -1,0 +1,25 @@
+; Engine configuration file.
+; Godot 4.3+ project. Open this folder in the Godot editor, or run:
+;   godot --path game
+
+config_version=5
+
+[application]
+
+config/name="Neighborhood"
+config/description="Open-world sandbox generated from OpenStreetMap data."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+
+[physics]
+
+common/physics_ticks_per_second=120
+
+[rendering]
+
+anti_aliasing/quality/msaa_3d=2

@@ -1,0 +1,5 @@
+.godot/
+export/
+maps/*.osm
+!maps/sample.osm
+__pycache__/
