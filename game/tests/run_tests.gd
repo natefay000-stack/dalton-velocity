@@ -47,6 +47,7 @@ func _run() -> void:
 	await test_ortho()
 	print("daylight")
 	test_daylight()
+	test_audio()
 	print("physics")
 	await test_gameplay()
 	print("%s (%d failure%s)" % ["PASSED" if failures == 0 else "FAILED", failures, "" if failures == 1 else "s"])
@@ -672,6 +673,49 @@ func test_ortho() -> void:
 	check(b.occupancy.get_at(-201.0, -181.0) & Occupancy.WATER, "pool is water in the occupancy grid")
 	map.queue_free()
 	await process_frame
+
+
+func test_audio() -> void:
+	var a: Node = load("res://scripts/audio.gd").new()
+	root.add_child(a)
+	var rms := func(buf: PackedVector2Array) -> float:
+		var t := 0.0
+		for v in buf:
+			t += v.x * v.x
+		return sqrt(t / buf.size())
+	var peak := func(buf: PackedVector2Array) -> float:
+		var m := 0.0
+		for v in buf:
+			m = maxf(m, absf(v.x))
+		return m
+	a.state = {"driving": false, "speed": 0.0, "throttle": 0.0, "handbrake": false, "foot_speed": 0.0, "grounded": true, "night": false, "horn": false}
+	var quiet: PackedVector2Array = a.render(16000)
+	a.state["driving"] = true
+	a.state["speed"] = 15.0
+	a.state["throttle"] = 1.0
+	a.render(8000)  # let the envelopes settle
+	var engine: PackedVector2Array = a.render(16000)
+	check(rms.call(engine) > rms.call(quiet) * 3.0, "engine is audible over the idle ambience (%.3f vs %.3f rms)" % [rms.call(engine), rms.call(quiet)])
+	check(peak.call(engine) <= 1.0 and peak.call(quiet) <= 1.0, "mix never clips")
+	a.state["horn"] = true
+	a.render(2000)
+	var horn: PackedVector2Array = a.render(8000)
+	check(rms.call(horn) > rms.call(engine) * 1.5, "horn is loud (%.3f rms)" % rms.call(horn))
+	a.state = {"driving": false, "speed": 4.0, "throttle": 0.0, "handbrake": false, "foot_speed": 4.0, "grounded": true, "night": true, "horn": false}
+	a.render(8000)
+	var walking: PackedVector2Array = a.render(16000)
+	# Footsteps: count onsets as the step envelope restarting.
+	var steps := 0
+	var prev := 0.0
+	for i in range(0, walking.size(), 400):
+		var win := 0.0
+		for k in 400:
+			win = maxf(win, absf(walking[i + k].x))
+		if win > prev * 2.0 and win > 0.1:
+			steps += 1
+		prev = win
+	check(steps >= 2 and steps <= 8, "footsteps at a jogging cadence (%d onsets/s)" % steps)
+	a.queue_free()
 
 
 func test_daylight() -> void:

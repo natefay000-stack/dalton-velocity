@@ -22,6 +22,7 @@ const CarMesh := preload("res://scripts/car_mesh.gd")
 const Daylight := preload("res://scripts/daylight.gd")
 const Minimap := preload("res://scripts/minimap.gd")
 const Hud := preload("res://scripts/hud.gd")
+const GameAudio := preload("res://scripts/audio.gd")
 const Ortho := preload("res://scripts/ortho.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
@@ -34,6 +35,7 @@ var car: VehicleBody3D
 var rig: Node3D
 var hud: Label  # the hint lines (kept for tools); the overlay is `overlay`
 var overlay: CanvasLayer
+var audio: Node
 var in_car := false
 var map_bounds := Rect2()
 var terrain: Terrain = null
@@ -135,6 +137,9 @@ func _ready() -> void:
 	rig.set_target(player, 4.5, 1.6, false)
 	rig.yaw = builder.spawn_yaw
 	_build_hud()
+	audio = GameAudio.new()
+	audio.name = "Audio"
+	add_child(audio)
 	if map_bounds.size.x > 0.0:
 		minimap = Minimap.new()
 		minimap.name = "Minimap"
@@ -180,6 +185,7 @@ func _setup_input() -> void:
 		"toggle_mouse": [KEY_ESCAPE],
 		"time_back": [KEY_BRACKETLEFT],
 		"time_forward": [KEY_BRACKETRIGHT],
+		"horn": [KEY_H],
 	}
 	for action in bindings:
 		if not InputMap.has_action(action):
@@ -279,3 +285,13 @@ func _process(delta: float) -> void:
 		state["hints"] = "WASD move   Shift sprint   Ctrl walk   Space jump   Mouse look   M map   Esc release mouse"
 		state["prompt"] = "Press E to drive" if p.distance_to(car.global_position) < ENTER_DISTANCE else ""
 	overlay.update(delta, state)
+	audio.state = {
+		"driving": in_car,
+		"speed": absf(car.forward_speed()) if in_car else Vector2(player.velocity.x, player.velocity.z).length(),
+		"throttle": absf(Input.get_axis("move_back", "move_forward")) if in_car else 0.0,
+		"handbrake": in_car and Input.is_action_pressed("jump"),
+		"foot_speed": Vector2(player.velocity.x, player.velocity.z).length() if not in_car else 0.0,
+		"grounded": player.is_on_floor(),
+		"night": daylight.is_night,
+		"horn": in_car and Input.is_action_pressed("horn"),
+	}
