@@ -463,6 +463,29 @@ func _air_pose(vertical_speed: float, t: float) -> void:
 	joints["hips"].position.y = _hips_y
 
 
+## Fixed driving pose: sat down, legs forward, hands up on a wheel.
+func pose_seated() -> void:
+	if joints.is_empty():
+		return
+	var pose := {
+		"hip_l": 1.35, "hip_r": 1.35, "knee_l": -0.8, "knee_r": -0.8,
+		"ankle_l": 0.3, "ankle_r": 0.3,
+		"shoulder_l": 0.85, "shoulder_r": 0.85, "elbow_l": 0.7, "elbow_r": 0.7,
+		"neck": 0.0,
+	}
+	for j in pose:
+		var n: Node3D = joints[j]
+		var roll := 0.0
+		if j.begins_with("shoulder"):
+			roll = SHOULDER_ROLL * (-1.0 if j.ends_with("_l") else 1.0)
+		n.rotation = Vector3(pose[j], 0.0, roll)
+		_pose[j] = pose[j]
+	joints["hips"].position.y = 0.42
+	joints["hips"].rotation = Vector3.ZERO
+	joints["spine"].rotation = Vector3(0.06, 0.0, 0.0)
+	_hips_y = 0.42
+
+
 # --- Construction helpers --------------------------------------------------
 
 func _joint(name: String, parent: Node3D, pos: Vector3) -> Node3D:

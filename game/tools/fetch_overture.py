@@ -394,6 +394,8 @@ def add_roads(osm: OsmWriter, rows: list[dict[str, Any]], bbox: Bbox) -> int:
         if kind != "line":
             continue
         tags = {"highway": highway}
+        if row.get("subclass") in ("driveway", "parking_aisle", "alley"):
+            tags["service"] = row["subclass"]
         if _name(row):
             tags["name"] = _name(row)
         for part in parts:

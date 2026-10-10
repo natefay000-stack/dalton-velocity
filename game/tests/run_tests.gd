@@ -8,6 +8,9 @@ const MapBuilder := preload("res://scripts/map_builder.gd")
 const Humanoid := preload("res://scripts/humanoid.gd")
 const GltfCharacter := preload("res://scripts/gltf_character.gd")
 const Terrain := preload("res://scripts/terrain.gd")
+const Occupancy := preload("res://scripts/occupancy.gd")
+const PropsBuilder := preload("res://scripts/props_builder.gd")
+const Pedestrians := preload("res://scripts/pedestrians.gd")
 
 var failures := 0
 
@@ -34,6 +37,8 @@ func _run() -> void:
 	test_clip_matching()
 	print("terrain")
 	await test_terrain()
+	print("props")
+	await test_props()
 	print("physics")
 	await test_gameplay()
 	print("%s (%d failure%s)" % ["PASSED" if failures == 0 else "FAILED", failures, "" if failures == 1 else "s"])
@@ -290,6 +295,7 @@ func test_terrain() -> void:
 	check(Terrain.new().load_file(bad, d) != OK, "corrupt height file rejected")
 
 	var b := MapBuilder.new()
+	b.facades = false  # bare walls, so wall corners can be told apart below
 	var map := b.build(d, t)
 	root.add_child(map)
 	await physics_frame
@@ -331,7 +337,8 @@ func test_terrain() -> void:
 		col_max[key] = maxf(col_max.get(key, -INF), v.y)
 	var walls := 0
 	for key in col_min:
-		if col_max[key] - col_min[key] < 1.0:
+		# Door, garage and window quads span at most 2.3 m; walls span more.
+		if col_max[key] - col_min[key] < 2.5:
 			continue
 		walls += 1
 		if col_min[key] > t.height_at(key.x / 10.0, key.y / 10.0) + 0.01:
@@ -390,6 +397,77 @@ func test_terrain() -> void:
 	await process_frame
 
 
+func test_props() -> void:
+	var d := OsmData.new()
+	d.parse_file("res://maps/sample.osm")
+	var b := MapBuilder.new()
+	var map := b.build(d)
+	root.add_child(map)
+	check(b.occupancy.count(Occupancy.ROAD) > 20000, "occupancy: roads rasterised (%d cells)" % b.occupancy.count(Occupancy.ROAD))
+	check(b.occupancy.count(Occupancy.BUILDING) > 30000, "occupancy: buildings rasterised (%d cells)" % b.occupancy.count(Occupancy.BUILDING))
+	check(b.stats.get("driveways", 0) > 60, "garages get driveways to the street (%d)" % b.stats.get("driveways", 0))
+	var fronts := 0
+	for bl in b.building_list:
+		if bl["front"] >= 0:
+			fronts += 1
+	check(fronts > b.building_list.size() * 0.9, "street-facing wall found for %d/%d buildings" % [fronts, b.building_list.size()])
+
+	var props := PropsBuilder.new()
+	var node := props.build(b, func(_x, _z): return 0.0, 3)
+	root.add_child(node)
+	check(props.stats["trees"] > 60 and props.stats["parked"] > 20 and props.stats["lights"] > 10,
+		"props placed: %s" % props.stats)
+	# Nothing may stand on a road, in a house or in the pond; cars must be
+	# on pavement (street or driveway).
+	var bad_trees := 0
+	var bad_cars := 0
+	var cars := 0
+	for key in props.instances:
+		var is_car: bool = key.begins_with("car:")
+		var is_tree: bool = key in ["deciduous", "conifer", "scrub"]
+		if not (is_car or is_tree):
+			continue
+		for xf in props.instances[key]:
+			var o: Vector3 = xf.origin
+			var cell := b.occupancy.get_at(o.x, o.z)
+			if is_tree and cell & (Occupancy.ROAD | Occupancy.BUILDING | Occupancy.WATER):
+				bad_trees += 1
+			if is_car:
+				cars += 1
+				if cell & (Occupancy.BUILDING | Occupancy.WATER) or not (cell & (Occupancy.ROAD | Occupancy.DRIVEWAY)):
+					bad_cars += 1
+	check(bad_trees == 0, "no tree on a road, house or water (%d)" % bad_trees)
+	check(cars > 0 and bad_cars == 0, "all %d parked cars on street or driveway, none in a house (%d bad)" % [cars, bad_cars])
+	var shapes := node.get_node("Collision").get_child_count()
+	check(shapes >= props.stats["trees"] + props.stats["parked"] + props.stats["lights"], "trees, cars and poles have collision (%d shapes)" % shapes)
+
+	# Pedestrians stay on the paths and keep moving.
+	var peds := Pedestrians.new()
+	peds.setup(b.road_list, func(_x, _z): return 0.0, 12, 5)
+	root.add_child(peds)
+	var starts := []
+	for w in peds.walkers:
+		starts.append(w["node"].global_position)
+	peds.set_focus(Vector3.ZERO)
+	for i in 600:
+		await physics_frame
+	var off_path := 0
+	var moved := 0
+	for k in peds.walkers.size():
+		var p: Vector3 = peds.walkers[k]["node"].global_position
+		if not (b.occupancy.get_at(p.x, p.z) & Occupancy.PATH):
+			off_path += 1
+		if p.distance_to(starts[k]) > 3.0:
+			moved += 1
+	check(peds.walkers.size() == 12, "12 pedestrians spawned")
+	check(off_path == 0, "pedestrians stay on footways after 10 s (%d off)" % off_path)
+	check(moved == 12, "pedestrians keep walking (%d moved)" % moved)
+	peds.queue_free()
+	node.queue_free()
+	map.queue_free()
+	await process_frame
+
+
 func test_gameplay() -> void:
 	var main: Node3D = load("res://main.tscn").instantiate()
 	main.map_path = "res://maps/sample.osm"  # not whatever map is installed locally
@@ -427,6 +505,12 @@ func test_gameplay() -> void:
 	ev.pressed = true
 	main._unhandled_input(ev)
 	check(main.in_car, "entered car")
+	check(car.driver.visible and not player.visible, "driver shown in the car, player hidden")
+	var head_top := -INF
+	for mi in car.driver.find_children("*", "MeshInstance3D", true, false):
+		var bb: AABB = mi.global_transform * mi.get_aabb()
+		head_top = maxf(head_top, (car.global_transform.affine_inverse() * bb.end).y)
+	check(head_top < 1.52, "driver's head below the roof (top %.2f m)" % head_top)
 	var car_start := car.global_position
 	Input.action_press("move_forward")
 	for i in 240:

@@ -19,7 +19,7 @@ var dx := 1.0
 var dz := 1.0
 var base_elevation := 0.0
 
-const SKIRT_LENGTH := 4000.0
+const SKIRT_LENGTH := 30000.0
 
 
 ## Loads a .height file and maps it into `data`'s local frame.

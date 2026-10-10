@@ -51,6 +51,24 @@ and drop the `.osm` file into `game/maps/`.
 committed by accident — remove that line from `game/.gitignore` if you want it
 versioned.
 
+## What's in the world
+
+- **Roads** with kerbs, sidewalks (from the data), yellow centre lines on
+  through roads, and driveways synthesised from each house's garage to the
+  street.
+- **Houses** with hipped or gabled roofs, windows on every wall, a front
+  door and a garage door on the wall that faces the street.
+- **Trees** in yards, parks and woods, sage scrub on the open hillside,
+  street lights, and parked cars (sedans, SUVs, pickups in nine colours)
+  in driveways and along kerbs. All placed on a 1 m occupancy grid so
+  nothing sits on a road, in a house or in the water; all have collision.
+- **Pedestrians** (40 by default, `pedestrian_count` on the Main node)
+  walking the footpath network, animating within 160 m of you.
+- **A visible driver** (your character) when you're in the car.
+
+Placement is seeded from the map file name, so a given map always looks the
+same.
+
 ## Player character
 
 By default you play a procedurally built person (articulated body, clothes,
@@ -86,7 +104,11 @@ scripts/main.gd            input map, sky/sun, spawn, enter/exit car, HUD
 scripts/player.gd          CharacterBody3D on-foot controller
 scripts/humanoid.gd        procedural person + walk/run animation
 scripts/gltf_character.gd  drop-in rigged .glb player (auto clip matching)
-scripts/car.gd             VehicleBody3D (RWD, front steer)
+scripts/car.gd             VehicleBody3D (RWD, front steer), seated driver
+scripts/car_mesh.gd        low-poly sedan / SUV / pickup meshes from a side profile
+scripts/occupancy.gd       1 m grid of what's where (roads, houses, water, props)
+scripts/props_builder.gd   trees, scrub, parked cars, street lights (MultiMesh)
+scripts/pedestrians.gd     walkers on the footpath graph
 scripts/camera_rig.gd      orbit camera with spring arm
 tools/fetch_osm.py         Overpass downloader
 tests/run_tests.gd         headless engine tests (parser, geometry, physics)
@@ -113,9 +135,8 @@ cd game && python3 -m unittest discover -s tools
   cut into it.
 - Whole map is built at load time as a few merged meshes. Fine for a few km²;
   beyond that, chunk by tile and stream.
-- Primitive visuals. Swap in CC0 models (Quaternius, KayKit, Kenney) for the
-  player and car by replacing the mesh code in `player.gd` / `car.gd`;
-  for buildings, assign a textured material in `map_builder.gd::_attach`.
-- No traffic or pedestrians yet. Drivable road centrelines are already
-  identified in `map_builder.gd` (`DRIVABLE_TYPES`) — that's the graph to
-  build lane-following AI on.
+- Everything is flat-shaded low-poly, no textures. Textured walls/roads
+  would be the next visual step (`map_builder.gd::_attach`).
+- No moving traffic yet; parked cars only. Drivable road centrelines are
+  in `MapBuilder.road_list` — that's the graph to build lane-following AI on.
+- Pedestrians have no collision: you walk through them and they ignore you.

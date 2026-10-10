@@ -7,64 +7,70 @@ extends VehicleBody3D
 @export var max_steer := 0.55
 @export var steer_speed := 3.0
 @export var top_speed_kmh := 120.0
-@export var body_color := Color(0.80, 0.12, 0.10)
+@export var body_color := Color(0.62, 0.10, 0.09)
+## "sedan", "suv" or "pickup" (see car_mesh.gd).
+@export var style := "sedan"
+## Appearance of the person shown behind the wheel while driving.
+@export var driver_look_seed := 1
+
+
+func set_driving(on: bool) -> void:
+	driving = on
+	if driver != null:
+		driver.visible = on
+
+const CarMesh := preload("res://scripts/car_mesh.gd")
+const Humanoid := preload("res://scripts/humanoid.gd")
 
 var driving := false
+var driver: Node3D = null
+## Seat position for a driver model (feet on the floor), local space.
+var driver_seat := Vector3(-0.38, 0.0, -0.2)
 
 
 func _ready() -> void:
-	mass = 1200.0
+	mass = 1200.0 if style == "sedan" else 1700.0
 	center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
 	center_of_mass = Vector3(0, 0.35, 0)
 	angular_damp = 0.5
 
+	var d := CarMesh.dims(style)
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(1.8, 0.7, 4.2)
+	shape.size = d["box_size"] - Vector3(0.1, 0.0, 0.1)
 	var cs := CollisionShape3D.new()
 	cs.shape = shape
-	cs.position.y = 0.75
+	cs.position = d["box_center"]
 	add_child(cs)
 
-	var paint := StandardMaterial3D.new()
-	paint.albedo_color = body_color
-	paint.metallic = 0.3
-	paint.roughness = 0.35
-	_box(Vector3(1.8, 0.6, 4.2), Vector3(0, 0.75, 0), paint)
-	var glass := StandardMaterial3D.new()
-	glass.albedo_color = Color(0.12, 0.15, 0.2)
-	glass.roughness = 0.1
-	_box(Vector3(1.6, 0.55, 2.1), Vector3(0, 1.3, 0.2), glass)
-	var light := StandardMaterial3D.new()
-	light.albedo_color = Color(1, 1, 0.85)
-	light.emission_enabled = true
-	light.emission = Color(1, 1, 0.8)
-	_box(Vector3(0.35, 0.15, 0.05), Vector3(-0.6, 0.85, -2.11), light)
-	_box(Vector3(0.35, 0.15, 0.05), Vector3(0.6, 0.85, -2.11), light)
+	var body := MeshInstance3D.new()
+	body.name = "Body"
+	body.mesh = CarMesh.build_body(style, body_color)
+	add_child(body)
+	driver_seat = Vector3(-0.38, d["floor"], -0.2)
 
-	# Forward is -Z: front wheels at negative Z.
-	_wheel(Vector3(-0.85, 0.45, -1.35), true)
-	_wheel(Vector3(0.85, 0.45, -1.35), true)
-	_wheel(Vector3(-0.85, 0.45, 1.35), false)
-	_wheel(Vector3(0.85, 0.45, 1.35), false)
+	driver = Humanoid.new()
+	driver.name = "Driver"
+	driver.look_seed = driver_look_seed
+	driver.build()
+	driver.pose_seated()
+	# Feet a little under the floor pan so the head clears the roof.
+	driver.position = driver_seat + Vector3(0, -0.14, 0.35)
+	driver.visible = false
+	add_child(driver)
 
-
-func _box(size: Vector3, pos: Vector3, mat: Material) -> void:
-	var m := BoxMesh.new()
-	m.size = size
-	m.material = mat
-	var mi := MeshInstance3D.new()
-	mi.mesh = m
-	mi.position = pos
-	add_child(mi)
+	var wheel_mesh := CarMesh.build_wheel(style)
+	var positions := CarMesh.wheel_positions(style)
+	for i in positions.size():
+		_wheel(positions[i], i < 2, wheel_mesh)
 
 
-func _wheel(pos: Vector3, front: bool) -> void:
+func _wheel(pos: Vector3, front: bool, mesh: ArrayMesh) -> void:
 	var w := VehicleWheel3D.new()
-	w.position = pos
+	w.position = pos + Vector3(0, 0.12, 0)
 	w.use_as_steering = front
 	w.use_as_traction = not front
-	w.wheel_radius = 0.38
-	w.wheel_rest_length = 0.15
+	w.wheel_radius = CarMesh.wheel_radius(style)
+	w.wheel_rest_length = 0.12
 	w.suspension_travel = 0.2
 	w.suspension_stiffness = 40.0
 	w.suspension_max_force = 12000.0
@@ -73,17 +79,8 @@ func _wheel(pos: Vector3, front: bool) -> void:
 	w.wheel_friction_slip = 2.8 if front else 2.5
 	w.wheel_roll_influence = 0.15
 	add_child(w)
-
-	var tire := CylinderMesh.new()
-	tire.top_radius = 0.38
-	tire.bottom_radius = 0.38
-	tire.height = 0.25
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.08, 0.08, 0.08)
-	tire.material = mat
 	var mi := MeshInstance3D.new()
-	mi.mesh = tire
-	mi.rotation.z = PI / 2.0
+	mi.mesh = mesh
 	w.add_child(mi)
 
 

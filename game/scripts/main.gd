@@ -15,6 +15,8 @@ const PlayerScript := preload("res://scripts/player.gd")
 const CarScript := preload("res://scripts/car.gd")
 const CameraRig := preload("res://scripts/camera_rig.gd")
 const Terrain := preload("res://scripts/terrain.gd")
+const PropsBuilder := preload("res://scripts/props_builder.gd")
+const Pedestrians := preload("res://scripts/pedestrians.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
 const ENTER_DISTANCE := 4.0
@@ -29,6 +31,10 @@ var in_car := false
 var map_bounds := Rect2()
 var terrain: Terrain = null
 var spawn_point := Vector3.ZERO
+var pedestrians: Node3D = null
+## Walkers on the footpaths (0 to disable).
+@export var pedestrian_count := 40
+@export var player_look_seed := 1
 
 
 func _ready() -> void:
@@ -50,6 +56,15 @@ func _ready() -> void:
 		add_child(builder.build(data, terrain))
 		print("Built map in %d ms%s" % [Time.get_ticks_msec() - t0,
 			" (terrain %dx%d, base %.0f m)" % [terrain.cols, terrain.rows, terrain.base_elevation] if terrain else ""])
+		t0 = Time.get_ticks_msec()
+		var props := PropsBuilder.new()
+		add_child(props.build(builder, ground_height, hash(path)))
+		print("Props in %d ms: %s" % [Time.get_ticks_msec() - t0, props.stats])
+		if pedestrian_count > 0:
+			pedestrians = Pedestrians.new()
+			pedestrians.name = "Pedestrians"
+			pedestrians.setup(builder.road_list, ground_height, pedestrian_count, hash(path))
+			add_child(pedestrians)
 		map_bounds = data.bounds
 		print("Loaded %s: %d roads, %d buildings, %d areas (%d skipped)" % [
 			path, builder.stats["roads"], builder.stats["buildings"],
@@ -64,11 +79,13 @@ func _ready() -> void:
 
 	car = CarScript.new()
 	car.name = "Car"
+	car.driver_look_seed = player_look_seed
 	add_child(car)
 	car.global_transform = Transform3D(Basis(Vector3.UP, builder.spawn_yaw), builder.spawn_position + Vector3.UP * 0.6)
 
 	player = PlayerScript.new()
 	player.name = "Player"
+	player.look_seed = player_look_seed
 	player.camera_rig = rig
 	add_child(player)
 	# Stand on the kerb beside the car.
@@ -196,7 +213,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func enter_car() -> void:
 	in_car = true
 	player.set_active(false)
-	car.driving = true
+	car.set_driving(true)
 	rig.set_target(car, 7.5, 2.0, true)
 
 
@@ -204,7 +221,7 @@ func exit_car() -> void:
 	if car.forward_speed() > 6.0:
 		return  # no bailing out at speed
 	in_car = false
-	car.driving = false
+	car.set_driving(false)
 	var side := car.global_basis * Vector3(-2.2, 0.0, 0.0)
 	player.global_position = Vector3(car.global_position.x + side.x, car.global_position.y + 0.5, car.global_position.z + side.z)
 	player.set_active(true)
@@ -221,6 +238,8 @@ func _process(_delta: float) -> void:
 	if hud == null:
 		return
 	var p := car.global_position if in_car else player.global_position
+	if pedestrians != null:
+		pedestrians.set_focus(p)
 	var lines := PackedStringArray()
 	if in_car:
 		lines.append("%d km/h" % roundi(absf(car.forward_speed()) * 3.6))
