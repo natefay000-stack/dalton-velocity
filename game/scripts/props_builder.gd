@@ -68,7 +68,7 @@ func build(builder: MapBuilder, ground: Callable, seed: int = 1) -> Node3D:
 	_place_driveway_props(builder.road_list)
 	_place_trampolines(builder.building_list)
 	_place_porch_lights(builder.door_list)
-	_place_stop_signs(builder.road_list)
+	_place_stop_signs(builder.road_list, builder.signal_junctions)
 	if builder.parcel_list.is_empty():
 		_place_fences(builder.building_list)
 	else:
@@ -405,7 +405,7 @@ func _place_porch_lights(doors: Array) -> void:
 
 ## Stop signs where a minor road meets a bigger one, and at 4-way
 ## junctions of minor roads (all-way stop), on the right of each approach.
-func _place_stop_signs(roads: Array[Dictionary]) -> void:
+func _place_stop_signs(roads: Array[Dictionary], signalised: Dictionary = {}) -> void:
 	var rank := {"primary": 4, "secondary": 3, "tertiary": 2, "unclassified": 1, "residential": 1, "living_street": 0}
 	var junctions: Dictionary = {}  # key -> Array of {end point, incoming dir, highway, width}
 	for r in roads:
@@ -421,7 +421,7 @@ func _place_stop_signs(roads: Array[Dictionary]) -> void:
 			junctions[key].append({"p": end[0], "in": end[1], "highway": r["highway"], "width": r["width"]})
 	for key in junctions:
 		var arms: Array = junctions[key]
-		if arms.size() < 3:
+		if arms.size() < 3 or signalised.has(key):
 			continue
 		var top := 0
 		for a in arms:

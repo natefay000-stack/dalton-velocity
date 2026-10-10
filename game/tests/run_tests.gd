@@ -49,6 +49,7 @@ func _run() -> void:
 	test_daylight()
 	test_audio()
 	await test_wildlife()
+	await test_signals()
 	print("physics")
 	await test_gameplay()
 	print("%s (%d failure%s)" % ["PASSED" if failures == 0 else "FAILED", failures, "" if failures == 1 else "s"])
@@ -745,6 +746,97 @@ func test_wildlife() -> void:
 	await process_frame
 
 
+func test_signals() -> void:
+	var d := OsmData.new()
+	d.parse_file("res://maps/sample.osm")
+	var b := MapBuilder.new()
+	b.facades = false
+	var map := b.build(d)
+	root.add_child(map)
+	check(b.stats.get("signals", 0) >= 4, "signalised junctions found where the main roads cross (%d)" % b.stats.get("signals", 0))
+	var props := PropsBuilder.new()
+	var pnode := props.build(b, func(_x, _z): return 0.0, 3)
+	var near_signal := 0
+	for xf in props.instances.get("stop", []):
+		var o: Vector3 = (xf as Transform3D).origin
+		for key in b.signal_junctions:
+			if (b.signal_junctions[key]["p"] as Vector2).distance_to(Vector2(o.x, o.z)) < 12.0:
+				near_signal += 1
+	check(near_signal == 0, "no stop signs at signalised junctions (%d)" % near_signal)
+	pnode.queue_free()
+	var sig: Node3D = load("res://scripts/traffic_signals.gd").new()
+	root.add_child(sig)
+	sig.setup(b.signal_junctions, func(_x, _z): return 0.0, 1)
+	check(sig.junctions.size() == b.signal_junctions.size() and sig.get_child_count() >= 12, "a signal head on every approach (%d nodes)" % sig.get_child_count())
+	var ps: Array = sig.phase_states(5.0)
+	var ps2: Array = sig.phase_states(12.0)
+	var ps3: Array = sig.phase_states(20.0)
+	check(ps[0] == "green" and ps[1] == "red" and ps2[0] == "amber" and ps3[1] == "green" and ps3[0] == "red", "phases cycle green, amber, red (%s %s %s)" % [ps, ps2, ps3])
+	# Cross arms of one junction never both show green.
+	var key: Vector2i = sig.junctions.keys()[0]
+	var j: Dictionary = sig.junctions[key]
+	var conflicts := 0
+	for t in range(0, 28):
+		j["t"] = float(t)
+		sig._apply(j)
+		var greens := {}
+		for i in j["arms"].size():
+			var st: String = sig.state_for(j["arms"][i]["p"], -(j["arms"][i]["out"] as Vector2))
+			if st == "green":
+				greens[j["phases"][i]] = true
+		if greens.size() > 1:
+			conflicts += 1
+	check(conflicts == 0, "crossing arms never both green")
+	check(sig.state_for(Vector2(9999, 9999), Vector2.RIGHT) == "green", "no signal means go")
+	# Traffic stops for red: run 12 s and look at cars queued at a red approach.
+	var tr := Traffic.new()
+	tr.signals = sig
+	tr.setup(b.road_list, func(_x, _z): return 0.0, 24, 9)
+	root.add_child(tr)
+	var ran_red := 0
+	var waited := 0
+	for i in 1440:
+		await physics_frame
+		if i % 12 != 0:
+			continue
+		for c in tr.cars:
+			var e: Dictionary = tr._edges[c["edge"]]
+			var remaining: float = e["length"] - c["dist"] if c["dir"] > 0 else c["dist"]
+			if remaining > 5.0:
+				continue
+			var pts: PackedVector2Array = e["pts"]
+			var past_line: bool = remaining < 2.0
+			var end_p: Vector2 = pts[pts.size() - 1] if c["dir"] > 0 else pts[0]
+			var heading: Vector2 = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized() if c["dir"] > 0 else (pts[0] - pts[1]).normalized()
+			if sig.state_for(end_p, heading) == "red":
+				if c["speed"] > 1.0 and past_line:
+					ran_red += 1
+				elif c["speed"] < 0.5:
+					waited += 1
+	check(waited > 0 and ran_red == 0, "AI cars wait at red lights (%d waited, %d ran)" % [waited, ran_red])
+	tr.queue_free()
+	sig.queue_free()
+	# One-way street: a two-edge loop where one edge is one-way; no car ever drives it backwards.
+	var roads: Array[Dictionary] = []
+	var a_pts := PackedVector2Array([Vector2(0, 0), Vector2(100, 0)])
+	var b_pts := PackedVector2Array([Vector2(100, 0), Vector2(100, 60), Vector2(0, 60), Vector2(0, 0)])
+	roads.append({"pts": a_pts, "highway": "residential", "width": 6.0, "name": "A", "service": "", "oneway": "yes"})
+	roads.append({"pts": b_pts, "highway": "residential", "width": 6.0, "name": "B", "service": "", "oneway": ""})
+	var tr2 := Traffic.new()
+	tr2.setup(roads, func(_x, _z): return 0.0, 8, 2)
+	root.add_child(tr2)
+	var wrong := 0
+	for i in 1200:
+		await physics_frame
+		for c in tr2.cars:
+			if c["edge"] == 0 and c["dir"] != 1:
+				wrong += 1
+	check(wrong == 0, "no AI car drives the one-way street backwards")
+	tr2.queue_free()
+	map.queue_free()
+	await process_frame
+
+
 func test_audio() -> void:
 	var a: Node = load("res://scripts/audio.gd").new()
 	root.add_child(a)
@@ -897,6 +989,9 @@ func test_gameplay() -> void:
 	main.pause_menu.toggle()
 	check(not main.pause_menu.open and not paused, "resume unpauses")
 	main.daylight.hour = 10.0
+	var maps: Array = main.available_maps()
+	check(maps.size() >= 1 and maps[maps.size() - 1][0] == "sample", "maps listed with the sample last (%s)" % str(maps))
+	check(main.pause_menu._maps_row.get_child_count() == maps.size(), "pause menu has a travel button per map")
 	check(main._place_name("res://maps/herriman.osm") == "HERRIMAN" and main._place_name("res://maps/sample.osm") == "SAMPLE TOWN", "title card names the place")
 	# HUD banner shows the street you're on.
 	main.overlay.update(0.5, {"street": "Main Street", "clock": "10:00", "driving": true, "speed_ms": 10.0})

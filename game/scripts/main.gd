@@ -25,12 +25,15 @@ const Hud := preload("res://scripts/hud.gd")
 const GameAudio := preload("res://scripts/audio.gd")
 const PauseMenu := preload("res://scripts/pause_menu.gd")
 const Wildlife := preload("res://scripts/wildlife.gd")
+const TrafficSignals := preload("res://scripts/traffic_signals.gd")
 const Ortho := preload("res://scripts/ortho.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
 const ENTER_DISTANCE := 4.0
 
 @export_file("*.osm") var map_path := ""
+## Map chosen from the pause menu; survives the scene reload that loads it.
+static var next_map := ""
 
 var player: CharacterBody3D
 var car: VehicleBody3D
@@ -40,6 +43,7 @@ var overlay: CanvasLayer
 var audio: Node
 var pause_menu: CanvasLayer
 var wildlife: Node3D = null
+var signals: Node3D = null
 ## Deer on the open ground (0 to disable).
 @export var deer_count := 18
 var in_car := false
@@ -105,9 +109,15 @@ func _ready() -> void:
 			pedestrians.name = "Pedestrians"
 			pedestrians.setup(builder.road_list, ground_height, pedestrian_count, hash(path))
 			add_child(pedestrians)
+		if not builder.signal_junctions.is_empty():
+			signals = TrafficSignals.new()
+			signals.name = "Signals"
+			add_child(signals)
+			signals.setup(builder.signal_junctions, ground_height, hash(path) + 3)
 		if traffic_count > 0:
 			traffic = Traffic.new()
 			traffic.name = "Traffic"
+			traffic.signals = signals
 			traffic.setup(builder.road_list, ground_height, traffic_count, hash(path) + 1)
 			add_child(traffic)
 			traffic.set_night(daylight.is_night)
@@ -158,6 +168,8 @@ func _ready() -> void:
 	pause_menu.name = "PauseMenu"
 	add_child(pause_menu)
 	pause_menu.time_chosen.connect(func(h: float) -> void: daylight.hour = h)
+	pause_menu.set_maps(available_maps(), _resolve_map_path())
+	pause_menu.map_chosen.connect(travel_to)
 	if map_bounds.size.x > 0.0:
 		minimap = Minimap.new()
 		minimap.name = "Minimap"
@@ -179,7 +191,26 @@ func ground_height(x: float, z: float) -> float:
 	return terrain.height_at(x, z) if terrain != null else 0.0
 
 
+## Every map in res://maps as [name, path], the sample last.
+static func available_maps() -> Array:
+	var out: Array = []
+	for f in DirAccess.get_files_at("res://maps"):
+		if f.get_extension() == "osm":
+			out.append([f.get_basename(), "res://maps/" + f])
+	out.sort_custom(func(a, b): return (a[0] != "sample" and b[0] == "sample") or (b[0] != "sample" and a[0] < b[0]))
+	return out
+
+
+## Reload the scene on another map.
+func travel_to(path: String) -> void:
+	next_map = path
+	get_tree().paused = false
+	get_tree().reload_current_scene()
+
+
 func _resolve_map_path() -> String:
+	if next_map != "":
+		return next_map
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--map="):
 			return arg.trim_prefix("--map=")

@@ -113,6 +113,11 @@ var area_list: Array[Dictionary] = []
 var water_rings: Array[PackedVector2Array] = []
 ## Lot boundaries (parcel=yes ways), when the map has them.
 var parcel_list: Array[PackedVector2Array] = []
+## Signalised junctions: Vector2i key (SNAP 1.5 m) -> {p, arms: [{p, out, width, highway}]}.
+## Junctions of 3+ curbed streets where a primary or secondary road meets
+## another street, or four tertiary-or-better arms.
+var signal_junctions: Dictionary = {}
+const SIGNAL_RANK := {"primary": 3, "secondary": 2, "tertiary": 1}
 var _driveways: Array[PackedVector2Array] = []
 var _walks: Array = []  # [door point, outward dir]
 ## Front doors as [point (Vector2), outward dir (Vector2)], for props.
@@ -230,7 +235,8 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 		var width := _road_width(tags)
 		_add_road(roads, pts, hw, width)
 		road_list.append({"pts": pts, "highway": hw, "width": width,
-			"name": tags.get("name", ""), "service": tags.get("service", "")})
+			"name": tags.get("name", ""), "service": tags.get("service", ""),
+			"oneway": String(tags.get("oneway", ""))})
 		var foot := hw in FOOT_TYPES
 		occupancy.mark_polyline(pts, width * 0.5 + (0.3 if foot else 1.2), Occupancy.PATH if foot else Occupancy.ROAD)
 		if tags.get("service") == "driveway":
@@ -1131,11 +1137,24 @@ func _add_crosswalks() -> void:
 			var key := Vector2i(roundi(end[0].x / 1.5), roundi(end[0].y / 1.5))
 			if not junctions.has(key):
 				junctions[key] = []
-			junctions[key].append({"p": end[0], "out": end[1], "width": r["width"], "sub": sub})
+			junctions[key].append({"p": end[0], "out": end[1], "width": r["width"], "sub": sub, "highway": r["highway"]})
 	for key in junctions:
 		var arms: Array = junctions[key]
 		if arms.size() < 3:
 			continue
+		var top := 0
+		var ranked := 0
+		for a in arms:
+			var rk: int = SIGNAL_RANK.get(a["highway"], 0)
+			top = maxi(top, rk)
+			if rk >= 1:
+				ranked += 1
+		if top >= 2 or (arms.size() >= 4 and ranked >= 4):
+			var light_arms: Array = []
+			for a in arms:
+				light_arms.append({"p": a["p"], "out": a["out"], "width": a["width"], "highway": a["highway"]})
+			signal_junctions[key] = {"p": arms[0]["p"], "arms": light_arms}
+			stats["signals"] = stats.get("signals", 0) + 1
 		var widest := 0.0
 		for a in arms:
 			widest = maxf(widest, a["width"])

@@ -421,6 +421,9 @@ def add_roads(osm: OsmWriter, rows: list[dict[str, Any]], bbox: Bbox) -> int:
         tags = {"highway": highway}
         if row.get("subclass") in ("driveway", "parking_aisle", "alley"):
             tags["service"] = row["subclass"]
+        oneway = _oneway(row.get("access_restrictions"))
+        if oneway:
+            tags["oneway"] = oneway
         if _name(row):
             tags["name"] = _name(row)
         for part in parts:
@@ -428,6 +431,27 @@ def add_roads(osm: OsmWriter, rows: list[dict[str, Any]], bbox: Bbox) -> int:
                 osm.way(piece, tags)
                 count += 1
     return count
+
+
+def _oneway(restrictions: Any) -> str:
+    """OSM oneway value from Overture access_restrictions: a blanket rule
+    denying travel against the geometry's direction makes the road one-way.
+    Mode-specific rules (no trucks, no bikes, ...) are ignored."""
+    if not isinstance(restrictions, (list, tuple)):
+        return ""
+    for rule in restrictions:
+        if not isinstance(rule, dict) or rule.get("access_type") != "denied":
+            continue
+        when = rule.get("when") or {}
+        if not isinstance(when, dict):
+            continue
+        if when.get("mode") or when.get("using") or when.get("recognized") or when.get("during"):
+            continue
+        if when.get("heading") == "backward":
+            return "yes"
+        if when.get("heading") == "forward":
+            return "-1"
+    return ""
 
 
 def _num(value: Any) -> float | None:
@@ -637,7 +661,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Overture {release}, {area:.2f} km^2")
         osm = OsmWriter()
         segs = read_features(release, "theme=transportation/type=segment", bbox,
-                             ["bbox", "geometry", "subtype", "class", "subclass", "names"])
+                             ["bbox", "geometry", "subtype", "class", "subclass", "names", "access_restrictions"])
         n_roads = add_roads(osm, segs, bbox)
         water = read_features(release, "theme=base/type=water", bbox, ["bbox", "geometry", "subtype", "class", "names"])
         n_water = add_areas(osm, water, True, bbox)

@@ -33,6 +33,8 @@ var _night := false
 var _beams: Array[SpotLight3D] = []  # pool of 2 * HEADLIGHT_CARS spotlights
 var _beam_timer := 0.0
 var _honks: Array[float] = []  # distances (m) of AI horns since last take
+## Traffic signals node (state_for(key, heading)); null = none.
+var signals: Node = null
 
 
 func setup(roads: Array[Dictionary], ground_fn: Callable, count: int, seed: int = 1) -> void:
@@ -47,8 +49,13 @@ func setup(roads: Array[Dictionary], ground_fn: Callable, count: int, seed: int 
 			length += pts[i].distance_to(pts[i + 1])
 		if length < 8.0:
 			continue
+		var oneway := 0
+		if r.get("oneway", "") == "yes":
+			oneway = 1
+		elif r.get("oneway", "") == "-1":
+			oneway = -1
 		_edges.append({"pts": pts, "length": length, "lane": maxf(r["width"] * 0.25, 1.4),
-			"limit": DRIVE_TYPES[r["highway"]]})
+			"limit": DRIVE_TYPES[r["highway"]], "oneway": oneway})
 		var idx := _edges.size() - 1
 		_junction(pts[0]).append([idx, false])
 		_junction(pts[pts.size() - 1]).append([idx, true])
@@ -65,7 +72,10 @@ func setup(roads: Array[Dictionary], ground_fn: Callable, count: int, seed: int 
 			if pick <= 0.0:
 				edge = k
 				break
-		_spawn(edge, _rng.randf_range(0.1, 0.9) * _edges[edge]["length"], 1 if _rng.randf() < 0.5 else -1)
+		var dir := 1 if _rng.randf() < 0.5 else -1
+		if _edges[edge]["oneway"] != 0:
+			dir = _edges[edge]["oneway"]
+		_spawn(edge, _rng.randf_range(0.1, 0.9) * _edges[edge]["length"], dir)
 
 
 func _junction(p: Vector2) -> Array:
@@ -192,6 +202,19 @@ func _drive(c: Dictionary, delta: float) -> void:
 	# through bends; zero when something is in the way.
 	var target: float = e["limit"]
 	target = minf(target, 3.0 + remaining * 0.6)
+	# Red light ahead: stop at the line (about 4 m short of the junction).
+	var red_stop := false
+	if signals != null and remaining < 30.0:
+		var pts: PackedVector2Array = e["pts"]
+		var end_p: Vector2 = pts[pts.size() - 1] if c["dir"] > 0 else pts[0]
+		var heading: Vector2 = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized() if c["dir"] > 0 else (pts[0] - pts[1]).normalized()
+		var light: String = signals.state_for(end_p, heading)
+		if light == "red" or (light == "amber" and remaining > 6.0):
+			red_stop = true
+			if remaining > 4.0:
+				target = minf(target, maxf(0.0, (remaining - 4.0) * 1.5))
+			else:
+				target = 0.0
 	var at := _point_at(e["pts"], clampf(c["dist"] + c["dir"] * 6.0, 0.0, e["length"]))
 	var here := _point_at(e["pts"], clampf(c["dist"], 0.0, e["length"]))
 	var turn: float = absf((at[1] as Vector2).angle_to(here[1]))
@@ -204,7 +227,7 @@ func _drive(c: Dictionary, delta: float) -> void:
 			target = minf(target, maxf(0.0, (gap - FOLLOW_GAP) * 1.2))
 	# Blocked for a while (parked car, stopped player): pull toward the
 	# centre line and go around.
-	if c["speed"] < 0.3 and ray.is_colliding():
+	if c["speed"] < 0.3 and ray.is_colliding() and not red_stop:
 		c["stuck"] += delta
 		if c["stuck"] > 1.4 and c["stuck"] - delta <= 1.4:
 			var d: float = c["node"].global_position.distance_to(_focus)
@@ -216,7 +239,7 @@ func _drive(c: Dictionary, delta: float) -> void:
 			passing = true
 	else:
 		c["stuck"] = 0.0
-	if passing:
+	if passing and not red_stop:
 		target = maxf(target, 2.0)
 	c["offset"] = move_toward(c["offset"], -1.5 if passing else 0.0, delta * 1.2)
 	if target > c["speed"]:
@@ -241,6 +264,9 @@ func _next_edge(c: Dictionary) -> void:
 		if o[0] == c["edge"]:
 			continue
 		var ne: Dictionary = _edges[o[0]]
+		# One-way: entering at its end means driving it backwards.
+		if (ne["oneway"] == 1 and o[1]) or (ne["oneway"] == -1 and not o[1]):
+			continue
 		var npts: PackedVector2Array = ne["pts"]
 		# Direction we'd leave the junction in.
 		var out: Vector2 = (npts[npts.size() - 2] - npts[npts.size() - 1]).normalized() if o[1] else (npts[1] - npts[0]).normalized()

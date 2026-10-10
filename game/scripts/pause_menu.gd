@@ -4,10 +4,12 @@ extends CanvasLayer
 
 signal resumed
 signal time_chosen(hour: float)
+signal map_chosen(path: String)
 
 var open := false
 var _root: Control
 var _controls: Label
+var _maps_row: HBoxContainer
 
 
 func _ready() -> void:
@@ -47,6 +49,13 @@ func _ready() -> void:
 		b.text = t[0]
 		b.pressed.connect(func() -> void: time_chosen.emit(t[1]))
 		times.add_child(b)
+	var maps_label := Label.new()
+	maps_label.text = "Travel"
+	maps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(maps_label)
+	_maps_row = HBoxContainer.new()
+	_maps_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(_maps_row)
 	_controls = Label.new()
 	_controls.add_theme_font_size_override("font_size", 13)
 	_controls.text = "\n".join([
@@ -68,6 +77,19 @@ func _button(parent: Node, text: String, on_press: Callable) -> void:
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	b.pressed.connect(on_press)
 	parent.add_child(b)
+
+
+## Buttons for every map; the current one is disabled.
+func set_maps(maps: Array, current: String) -> void:
+	for c in _maps_row.get_children():
+		c.queue_free()
+	for m in maps:
+		var b := Button.new()
+		b.text = String(m[0]).replace("_", " ").capitalize()
+		b.disabled = m[1] == current
+		var path: String = m[1]
+		b.pressed.connect(func() -> void: map_chosen.emit(path))
+		_maps_row.add_child(b)
 
 
 func toggle() -> void:
