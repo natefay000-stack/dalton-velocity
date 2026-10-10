@@ -650,6 +650,14 @@ func test_ortho() -> void:
 	var props := PropsBuilder.new()
 	var node := props.build(b, func(_x, _z): return 0.0, 3)
 	root.add_child(node)
+	check(props.stats.get("hoops", 0) >= 8 and props.stats.get("bins", 0) >= 15 and props.stats.get("trampolines", 0) >= 8 and props.stats.get("porch_lights", 0) >= 60,
+		"suburb props placed: %d hoops, %d bins, %d trampolines, %d porch lights" % [props.stats.get("hoops", 0), props.stats.get("bins", 0), props.stats.get("trampolines", 0), props.stats.get("porch_lights", 0)])
+	var tramp_bad := 0
+	for xf in props.instances.get("trampoline", []):
+		var to: Vector3 = (xf as Transform3D).origin
+		if not b.occupancy.is_free(to.x, to.z, 2.0, Occupancy.BUILDING | Occupancy.ROAD | Occupancy.WATER):
+			tramp_bad += 1
+	check(tramp_bad == 0, "trampolines clear of houses, roads and water (%d bad)" % tramp_bad)
 	var in_patch := 0
 	var outside := 0
 	for key in ["deciduous", "conifer"]:

@@ -115,6 +115,8 @@ var water_rings: Array[PackedVector2Array] = []
 var parcel_list: Array[PackedVector2Array] = []
 var _driveways: Array[PackedVector2Array] = []
 var _walks: Array = []  # [door point, outward dir]
+## Front doors as [point (Vector2), outward dir (Vector2)], for props.
+var door_list: Array = []
 var _paving: SurfaceTool
 var _bricks: SurfaceTool
 var _roofs: SurfaceTool
@@ -1005,6 +1007,7 @@ func _add_facade(st: SurfaceTool, a: Vector2, b: Vector2, out2: Vector2, ground:
 			if door_s >= 0.0:
 				place.call(door_s - 0.48, door_s + 0.48, y_base + 0.05, y_base + 2.1, COLOR_DOOR, 0.03)
 				_walks.append([a + dir * door_s + out2 * 0.05, out2])
+				door_list.append([a + dir * door_s, out2])
 				_add_porch(a + dir * door_s, dir, out2, y_base, wall)
 			# Windows in whatever is left, in order along the wall.
 			var blocks: Array = []

@@ -65,6 +65,9 @@ func build(builder: MapBuilder, ground: Callable, seed: int = 1) -> Node3D:
 	_place_parked_cars(builder.road_list)
 	_place_street_lights(builder.road_list)
 	_place_mailboxes(builder.road_list)
+	_place_driveway_props(builder.road_list)
+	_place_trampolines(builder.building_list)
+	_place_porch_lights(builder.door_list)
 	_place_stop_signs(builder.road_list)
 	if builder.parcel_list.is_empty():
 		_place_fences(builder.building_list)
@@ -75,6 +78,8 @@ func build(builder: MapBuilder, ground: Callable, seed: int = 1) -> Node3D:
 		"deciduous": _tree_mesh("deciduous"), "conifer": _tree_mesh("conifer"),
 		"scrub": _tree_mesh("scrub"), "light": _light_mesh(),
 		"mailbox": _mailbox_mesh(), "stop": _stop_sign_mesh(), "fence": _fence_mesh(),
+		"hoop": _hoop_mesh(), "bin": _bin_mesh(), "trampoline": _trampoline_mesh(),
+		"porch_light": _porch_light_mesh(),
 	}
 	for key in instances:
 		var mesh: Mesh = meshes.get(key)
@@ -316,6 +321,86 @@ func _place_mailboxes(roads: Array[Dictionary]) -> void:
 		_push("mailbox", Transform3D(Basis(Vector3.UP, atan2(-dir.x, -dir.y)), Vector3(pos.x, y, pos.y)), Color.WHITE)
 		_occ.mark_disc(pos.x, pos.y, 0.6, Occupancy.PROP)
 		stats["mailboxes"] += 1
+
+
+## Suburban driveway life: a basketball hoop at the top of a third of the
+## driveways and trash/recycling bins at the kerb of half of them.
+func _place_driveway_props(roads: Array[Dictionary]) -> void:
+	for r in roads:
+		if r["service"] != "driveway":
+			continue
+		var pts: PackedVector2Array = r["pts"]
+		if pts.size() < 2:
+			continue
+		var house: Vector2 = pts[0]
+		var street: Vector2 = pts[pts.size() - 1]
+		var dir: Vector2 = (street - house).normalized()
+		var right := Vector2(-dir.y, dir.x)
+		var yaw := atan2(-dir.x, -dir.y)  # local -Z faces the street
+		if _rng.randf() < 0.35:
+			# Hoop beside the driveway near the garage, backboard facing the street.
+			var pos: Vector2 = house + dir * 3.0 + right * -3.3
+			if _bounds.has_point(pos) and _occ.is_free(pos.x, pos.y, 0.4, Occupancy.BUILDING | Occupancy.ROAD | Occupancy.PROP | Occupancy.WATER):
+				var y: float = _ground.call(pos.x, pos.y)
+				_push("hoop", Transform3D(Basis(Vector3.UP, yaw), Vector3(pos.x, y, pos.y)), Color.WHITE)
+				var shape := CylinderShape3D.new()
+				shape.radius = 0.12
+				shape.height = 3.0
+				_shapes.append([shape, Transform3D(Basis.IDENTITY, Vector3(pos.x, y + 1.5, pos.y))])
+				_occ.mark_disc(pos.x, pos.y, 0.6, Occupancy.PROP)
+				stats["hoops"] = stats.get("hoops", 0) + 1
+		if _rng.randf() < 0.5:
+			# Bins at the kerb on the far side from the mailbox; a second one sometimes.
+			var n := 1 if _rng.randf() < 0.4 else 2
+			for k in n:
+				var pos: Vector2 = street - dir * 3.4 + right * (-2.6 - k * 0.9)
+				if not _bounds.has_point(pos) or not _occ.is_free(pos.x, pos.y, 0.35, Occupancy.BUILDING | Occupancy.ROAD | Occupancy.PROP | Occupancy.WATER):
+					continue
+				var y: float = _ground.call(pos.x, pos.y)
+				var col := Color(0.12, 0.12, 0.13) if k == 0 else Color(0.15, 0.30, 0.60)
+				_push("bin", Transform3D(Basis(Vector3.UP, yaw + _rng.randf_range(-0.2, 0.2)), Vector3(pos.x, y, pos.y)), col)
+				var shape := BoxShape3D.new()
+				shape.size = Vector3(0.7, 1.1, 0.8)
+				_shapes.append([shape, Transform3D(Basis(Vector3.UP, yaw), Vector3(pos.x, y + 0.55, pos.y))])
+				_occ.mark_disc(pos.x, pos.y, 0.5, Occupancy.PROP)
+				stats["bins"] = stats.get("bins", 0) + 1
+
+
+## A trampoline in the backyard of a quarter of the houses.
+func _place_trampolines(buildings: Array[Dictionary]) -> void:
+	for bl in buildings:
+		if bl["front"] < 0 or _rng.randf() > 0.25:
+			continue
+		var out: Vector2 = bl["front_dir"]
+		if out == Vector2.ZERO:
+			continue
+		var rect: Rect2 = bl["rect"]
+		var c := rect.get_center()
+		var ext := absf(out.x) * rect.size.x * 0.5 + absf(out.y) * rect.size.y * 0.5
+		var side := Vector2(-out.y, out.x)
+		var pos := c - out * (ext + _rng.randf_range(4.5, 7.0)) + side * _rng.randf_range(-3.0, 3.0)
+		if not _bounds.has_point(pos) or not _occ.is_free(pos.x, pos.y, 2.6, Occupancy.BUILDING | Occupancy.ROAD | Occupancy.PROP | Occupancy.WATER | Occupancy.PATH | Occupancy.DRIVEWAY | Occupancy.FENCE):
+			continue
+		var y: float = _ground.call(pos.x, pos.y)
+		_push("trampoline", Transform3D(Basis(Vector3.UP, _rng.randf() * TAU), Vector3(pos.x, y, pos.y)), Color.WHITE)
+		var shape := CylinderShape3D.new()
+		shape.radius = 2.2
+		shape.height = 0.9
+		_shapes.append([shape, Transform3D(Basis.IDENTITY, Vector3(pos.x, y + 0.45, pos.y))])
+		_occ.mark_disc(pos.x, pos.y, 2.4, Occupancy.PROP)
+		stats["trampolines"] = stats.get("trampolines", 0) + 1
+
+
+## A lamp beside every front door; lit at night with the street lamps.
+func _place_porch_lights(doors: Array) -> void:
+	for dr in doors:
+		var p: Vector2 = dr[0]
+		var out: Vector2 = dr[1]
+		var side := Vector2(-out.y, out.x)
+		var pos := p + side * 0.85 + out * 0.08
+		var y: float = _ground.call(p.x, p.y)
+		_push("porch_light", Transform3D(Basis(Vector3.UP, atan2(-out.x, -out.y)), Vector3(pos.x, y + 2.15, pos.y)), Color.WHITE)
+		stats["porch_lights"] = stats.get("porch_lights", 0) + 1
 
 
 ## Stop signs where a minor road meets a bigger one, and at 4-way
@@ -598,6 +683,140 @@ func _light_mesh() -> ArrayMesh:
 	lamp.emission_energy_multiplier = 0.0
 	mesh.surface_set_material(1, lamp)
 	lamp_material = lamp
+	return mesh
+
+
+func _hoop_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.append_from(_cyl(0.05, 0.06, 3.05), 0, Transform3D(Basis.IDENTITY, Vector3(0, 1.525, 0)))
+	var base := _cyl(0.4, 0.45, 0.3)
+	st.append_from(base, 0, Transform3D(Basis.IDENTITY, Vector3(0, 0.15, 0)))
+	var arm := BoxMesh.new()
+	arm.size = Vector3(0.08, 0.08, 0.6)
+	st.append_from(arm, 0, Transform3D(Basis.IDENTITY, Vector3(0, 2.95, -0.3)))
+	var mesh := st.commit()
+	var gray := StandardMaterial3D.new()
+	gray.albedo_color = Color(0.2, 0.2, 0.22)
+	gray.metallic = 0.3
+	mesh.surface_set_material(0, gray)
+	var bb := SurfaceTool.new()
+	bb.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var board := BoxMesh.new()
+	board.size = Vector3(1.1, 0.75, 0.04)
+	bb.append_from(board, 0, Transform3D(Basis.IDENTITY, Vector3(0, 3.2, -0.6)))
+	mesh = bb.commit(mesh)
+	var white := StandardMaterial3D.new()
+	white.albedo_color = Color(0.92, 0.92, 0.9)
+	mesh.surface_set_material(1, white)
+	var rim := SurfaceTool.new()
+	rim.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.21
+	torus.outer_radius = 0.24
+	torus.rings = 12
+	torus.ring_segments = 6
+	rim.append_from(torus, 0, Transform3D(Basis.IDENTITY, Vector3(0, 3.05, -0.85)))
+	mesh = rim.commit(mesh)
+	var orange := StandardMaterial3D.new()
+	orange.albedo_color = Color(0.9, 0.35, 0.1)
+	mesh.surface_set_material(2, orange)
+	return mesh
+
+
+func _bin_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var body := BoxMesh.new()
+	body.size = Vector3(0.62, 1.0, 0.72)
+	st.append_from(body, 0, Transform3D(Basis.IDENTITY, Vector3(0, 0.55, 0)))
+	var lid := BoxMesh.new()
+	lid.size = Vector3(0.68, 0.08, 0.78)
+	st.append_from(lid, 0, Transform3D(Basis.IDENTITY, Vector3(0, 1.09, 0)))
+	var mesh := st.commit()
+	var plastic := StandardMaterial3D.new()
+	plastic.vertex_color_use_as_albedo = true
+	plastic.roughness = 0.7
+	mesh.surface_set_material(0, plastic)
+	var wh := SurfaceTool.new()
+	wh.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for sx in [-0.28, 0.28]:
+		var w := _cyl(0.09, 0.09, 0.05)
+		wh.append_from(w, 0, Transform3D(Basis(Vector3.FORWARD, PI * 0.5), Vector3(sx, 0.09, 0.3)))
+	mesh = wh.commit(mesh)
+	var black := StandardMaterial3D.new()
+	black.albedo_color = Color(0.08, 0.08, 0.08)
+	mesh.surface_set_material(1, black)
+	return mesh
+
+
+func _trampoline_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var mat := _cyl(1.85, 1.85, 0.04)
+	mat.radial_segments = 16
+	st.append_from(mat, 0, Transform3D(Basis.IDENTITY, Vector3(0, 0.86, 0)))
+	var mesh := st.commit()
+	var black := StandardMaterial3D.new()
+	black.albedo_color = Color(0.1, 0.1, 0.1)
+	black.roughness = 0.9
+	mesh.surface_set_material(0, black)
+	var pad := SurfaceTool.new()
+	pad.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var ring := TorusMesh.new()
+	ring.inner_radius = 1.8
+	ring.outer_radius = 2.15
+	ring.rings = 16
+	ring.ring_segments = 5
+	pad.append_from(ring, 0, Transform3D(Basis.IDENTITY, Vector3(0, 0.9, 0)))
+	mesh = pad.commit(mesh)
+	var blue := StandardMaterial3D.new()
+	blue.albedo_color = Color(0.1, 0.3, 0.6)
+	mesh.surface_set_material(1, blue)
+	var frame := SurfaceTool.new()
+	frame.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for k in 6:
+		var a := TAU * k / 6.0
+		var leg := _cyl(0.025, 0.025, 0.88)
+		frame.append_from(leg, 0, Transform3D(Basis.IDENTITY, Vector3(cos(a) * 1.9, 0.44, sin(a) * 1.9)))
+		var pole := _cyl(0.02, 0.02, 2.0)
+		frame.append_from(pole, 0, Transform3D(Basis.IDENTITY, Vector3(cos(a) * 2.05, 1.9, sin(a) * 2.05)))
+	mesh = frame.commit(mesh)
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.55, 0.55, 0.58)
+	steel.metallic = 0.5
+	mesh.surface_set_material(2, steel)
+	var net := SurfaceTool.new()
+	net.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var netm := _cyl(2.05, 2.05, 1.9)
+	netm.radial_segments = 12
+	net.append_from(netm, 0, Transform3D(Basis.IDENTITY, Vector3(0, 1.9, 0)))
+	mesh = net.commit(mesh)
+	var mesh_mat := StandardMaterial3D.new()
+	mesh_mat.albedo_color = Color(0.2, 0.2, 0.2, 0.35)
+	mesh_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mesh_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh.surface_set_material(3, mesh_mat)
+	return mesh
+
+
+func _porch_light_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var bracket := BoxMesh.new()
+	bracket.size = Vector3(0.1, 0.16, 0.06)
+	st.append_from(bracket, 0, Transform3D(Basis.IDENTITY, Vector3(0, 0, 0.03)))
+	var mesh := st.commit()
+	var black := StandardMaterial3D.new()
+	black.albedo_color = Color(0.08, 0.08, 0.08)
+	mesh.surface_set_material(0, black)
+	var glass := SurfaceTool.new()
+	glass.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var lamp := BoxMesh.new()
+	lamp.size = Vector3(0.14, 0.22, 0.14)
+	glass.append_from(lamp, 0, Transform3D(Basis.IDENTITY, Vector3(0, -0.02, -0.1)))
+	mesh = glass.commit(mesh)
+	mesh.surface_set_material(1, lamp_material)  # shares the street-lamp glow
 	return mesh
 
 
