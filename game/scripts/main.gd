@@ -87,6 +87,7 @@ func _setup_input() -> void:
 		"move_right": [KEY_D, KEY_RIGHT],
 		"jump": [KEY_SPACE],
 		"sprint": [KEY_SHIFT],
+		"walk": [KEY_CTRL, KEY_ALT],
 		"interact": [KEY_E, KEY_F],
 		"reset_vehicle": [KEY_R],
 		"toggle_mouse": [KEY_ESCAPE],
@@ -189,7 +190,7 @@ func _process(_delta: float) -> void:
 		lines.append("%d km/h" % roundi(absf(car.forward_speed()) * 3.6))
 		lines.append("W/S throttle/brake  A/D steer  Space handbrake  R reset  E exit")
 	else:
-		lines.append("WASD move  Shift sprint  Space jump  Mouse look  Esc release mouse")
+		lines.append("WASD move  Shift sprint  Ctrl walk  Space jump  Mouse look  Esc release mouse")
 		if p.distance_to(car.global_position) < ENTER_DISTANCE:
 			lines.append("Press E to drive")
 	lines.append("pos %.0f, %.0f" % [p.x, p.z])

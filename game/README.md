@@ -33,12 +33,21 @@ and drop the `.osm` file into `game/maps/`.
 committed by accident — remove that line from `game/.gitignore` if you want it
 versioned.
 
+## Player character
+
+By default you play a procedurally built person (articulated body, clothes,
+face, randomised skin/hair/outfit via `look_seed` on the Player node) with a
+procedural idle / walk / jog / sprint / jump cycle. For a fully realistic,
+mocap-animated person, drop a rigged `.glb` into `assets/characters/player.glb`
+— see [assets/characters/README.md](assets/characters/README.md). Tested with
+Mixamo exports (both cm/+Z and m/−Z conventions).
+
 ## Controls
 
 | On foot | In car |
 |---|---|
 | WASD / arrows — move (camera-relative) | W / S — throttle, brake, reverse |
-| Shift — sprint, Space — jump | A / D — steer, Space — handbrake |
+| Shift — sprint, Ctrl — walk, Space — jump | A / D — steer, Space — handbrake |
 | Mouse — look | R — flip upright |
 | E / F near the car — get in | E / F — get out (below ~20 km/h) |
 
@@ -52,6 +61,8 @@ scripts/osm_data.gd        .osm XML parser + lat/lon -> local metres projection
 scripts/map_builder.gd     roads, buildings, land use -> merged meshes + collision
 scripts/main.gd            input map, sky/sun, spawn, enter/exit car, HUD
 scripts/player.gd          CharacterBody3D on-foot controller
+scripts/humanoid.gd        procedural person + walk/run animation
+scripts/gltf_character.gd  drop-in rigged .glb player (auto clip matching)
 scripts/car.gd             VehicleBody3D (RWD, front steer)
 scripts/camera_rig.gd      orbit camera with spring arm
 tools/fetch_osm.py         Overpass downloader

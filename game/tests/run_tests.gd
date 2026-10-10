@@ -5,6 +5,8 @@ extends SceneTree
 
 const OsmData := preload("res://scripts/osm_data.gd")
 const MapBuilder := preload("res://scripts/map_builder.gd")
+const Humanoid := preload("res://scripts/humanoid.gd")
+const GltfCharacter := preload("res://scripts/gltf_character.gd")
 
 var failures := 0
 
@@ -26,6 +28,9 @@ func _run() -> void:
 	test_sample_parse()
 	test_bad_inputs()
 	test_multipolygon()
+	print("character")
+	test_humanoid()
+	test_clip_matching()
 	print("physics")
 	await test_gameplay()
 	print("%s (%d failure%s)" % ["PASSED" if failures == 0 else "FAILED", failures, "" if failures == 1 else "s"])
@@ -123,6 +128,75 @@ func test_multipolygon() -> void:
 	check(outward, "building normals point outward")
 	check(wound, "building triangles front-face outward")
 	root.free()
+
+
+func _lowest_mesh_y(n: Node) -> float:
+	var lo := INF
+	if n is MeshInstance3D:
+		lo = (n.global_transform * n.get_aabb()).position.y
+	for c in n.get_children():
+		lo = minf(lo, _lowest_mesh_y(c))
+	return lo
+
+
+func _highest_mesh_y(n: Node) -> float:
+	var hi := -INF
+	if n is MeshInstance3D:
+		var b: AABB = n.global_transform * n.get_aabb()
+		hi = b.end.y
+	for c in n.get_children():
+		hi = maxf(hi, _highest_mesh_y(c))
+	return hi
+
+
+func test_humanoid() -> void:
+	var h: Node3D = Humanoid.new()
+	h.build()
+	root.add_child(h)
+	for i in 30:
+		h.update_motion(1.0 / 60.0, 0.0, true, 0.0)
+	var low := _lowest_mesh_y(h)
+	var high := _highest_mesh_y(h)
+	check(absf(low) < 0.02, "idle: soles on the ground (lowest y=%.3f)" % low)
+	check(high > 1.70 and high < 1.90, "adult height (top y=%.2f)" % high)
+
+	# Walking: legs alternate, feet never sink far below the ground.
+	var hip_l: Node3D = h.joints["hip_l"]
+	var min_a := INF
+	var max_a := -INF
+	var lowest := INF
+	for i in 120:
+		h.update_motion(1.0 / 60.0, 1.6, true, 0.0)
+		min_a = minf(min_a, hip_l.rotation.x)
+		max_a = maxf(max_a, hip_l.rotation.x)
+		lowest = minf(lowest, _lowest_mesh_y(h))
+	check(max_a > 0.25 and min_a < -0.25, "walk: left thigh swings %.2f..%.2f rad" % [min_a, max_a])
+	check(lowest > -0.08, "walk: feet stay near the ground (min y=%.3f)" % lowest)
+
+	# Same seed -> same look; the look varies across seeds.
+	var colors := {}
+	for seed in 8:
+		var hh: Node3D = Humanoid.new()
+		hh.look_seed = seed
+		hh.build()
+		colors[str(hh._mats["skin"].albedo_color, hh._mats["shirt"].albedo_color)] = true
+		hh.free()
+	check(colors.size() > 3, "look_seed varies appearance (%d distinct looks of 8)" % colors.size())
+	h.free()
+
+
+func test_clip_matching() -> void:
+	var mixamo := GltfCharacter.pick_clips(PackedStringArray(["Idle", "Run", "TPose", "Walk"]))
+	check(mixamo == {"idle": "Idle", "walk": "Walk", "run": "Run", "air": ""}, "Mixamo-style names %s" % mixamo)
+	var blender := GltfCharacter.pick_clips(PackedStringArray([
+		"Armature|Idle_Loop", "Armature|Walk_Loop", "Armature|Walk_Carry_Loop",
+		"Armature|Jog_Fwd_Loop", "Armature|Jump_Start", "Armature|Jump_Loop", "Armature|T-Pose"]))
+	check(blender["walk"] == "Armature|Walk_Loop", "shortest walk clip wins (%s)" % blender["walk"])
+	check(blender["run"] == "Armature|Jog_Fwd_Loop", "jog counts as run (%s)" % blender["run"])
+	check(blender["air"] == "Armature|Jump_Loop", "jump start excluded (%s)" % blender["air"])
+	var walk_only := GltfCharacter.pick_clips(PackedStringArray(["walking"]))
+	check(walk_only["run"] == "walking" and walk_only["idle"] == "", "missing run falls back to walk")
+	check(GltfCharacter.load_from("res://does/not/exist.glb") == null, "missing model -> null (procedural fallback)")
 
 
 func test_gameplay() -> void:
