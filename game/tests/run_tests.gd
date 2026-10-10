@@ -55,8 +55,8 @@ func _run() -> void:
 func test_sample_parse() -> void:
 	var d := OsmData.new()
 	check(d.parse_file("res://maps/sample.osm") == OK, "sample.osm parses")
-	check(d.points.size() == 571, "all 571 nodes projected (got %d)" % d.points.size())
-	check(d.ways.size() == 171, "all 171 ways read (got %d)" % d.ways.size())
+	check(d.points.size() == 1051, "all 1051 nodes projected (got %d)" % d.points.size())
+	check(d.ways.size() == 291, "all 291 ways read (got %d)" % d.ways.size())
 	# Grid is 4 x 110 m blocks centred on the origin.
 	# Grid is 440 m; the declared <bounds> adds a 60 m margin each side.
 	check(absf(d.bounds.size.x - 560.0) < 1.0, "east-west extent from <bounds> ~560 m (got %.2f)" % d.bounds.size.x)
@@ -447,6 +447,20 @@ func test_props() -> void:
 		if b.occupancy.get_at(o.x, o.z) & (Occupancy.ROAD | Occupancy.BUILDING | Occupancy.DRIVEWAY):
 			fence_bad += 1
 	check(fence_bad == 0, "no fence post on a road, house or driveway (%d)" % fence_bad)
+	check(b.parcel_list.size() == 120, "parcels read (%d)" % b.parcel_list.size())
+	# Lot-line fences: on the shared side line x = -188 of the NW block
+	# (between the first two lots) behind the setback, and never within 9 m
+	# of a street.
+	var on_line := 0
+	var near_street := 0
+	for xf in props.instances.get("fence", []):
+		var o: Vector3 = (xf as Transform3D) * Vector3(0, 0, -1.2)  # panel middle
+		if absf(o.x + 188.0) < 0.2 and o.z > -205.0 and o.z < -170.0:
+			on_line += 1
+		if not b.occupancy.is_free(o.x, o.z, 8.0, Occupancy.ROAD):
+			near_street += 1
+	check(on_line >= 6, "fences follow the lot line between neighbours (%d panels)" % on_line)
+	check(near_street == 0, "no lot-line fence in the front setback (%d)" % near_street)
 	check(b.stats.get("walks", 0) > 60, "front walks laid (%d)" % b.stats.get("walks", 0))
 	# Nothing may stand on a road, in a house or in the pond; cars must be
 	# on pavement (street or driveway).

@@ -132,6 +132,12 @@ func _render_map(builder: MapBuilder) -> void:
 
 func _draw_world(c: Node2D, builder: MapBuilder) -> void:
 	c.draw_rect(Rect2(Vector2.ZERO, bounds.size * scale_px), C_GROUND)
+	# With an aerial photo, it is the map: only roads go on top of it.
+	if builder.ortho != null:
+		var o = builder.ortho
+		c.draw_texture_rect(o.texture, Rect2(to_px(o.rect.position), o.rect.size * scale_px), false)
+		_draw_roads(c, builder)
+		return
 	for a in builder.area_list:
 		var ring: PackedVector2Array = a["ring"]
 		if ring.size() < 3:
@@ -156,6 +162,10 @@ func _draw_world(c: Node2D, builder: MapBuilder) -> void:
 			poly.append(to_px(p))
 		if poly.size() >= 3 and Geometry2D.triangulate_polygon(poly).size() > 0:
 			c.draw_polygon(poly, PackedColorArray([C_BUILDING]))
+	_draw_roads(c, builder)
+
+
+func _draw_roads(c: Node2D, builder: MapBuilder) -> void:
 	for r in builder.road_list:
 		var pts: PackedVector2Array = r["pts"]
 		if pts.size() < 2:

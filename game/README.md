@@ -49,6 +49,18 @@ finds backyard pools in the photo (blue blobs away from buildings and
 lakes) and adds them to the .osm as `leisure=swimming_pool`; they are
 carved and filled with water. About 2 minutes for a few km².
 
+**Then the lot lines** (Utah SGID parcels, public):
+
+```bash
+python3 game/tools/fetch_parcels.py game/maps/herriman.osm
+# or, from a GeoJSON you downloaded at https://opendata.gis.utah.gov:
+python3 game/tools/fetch_parcels.py game/maps/herriman.osm --geojson ~/Downloads/Parcels.geojson
+```
+
+Fences then run along real property lines (shared boundaries fenced once,
+street frontage and the 9 m front setback left open) instead of a guessed
+box behind each house.
+
 **Alternative — Overpass (OSM only, flat):**
 
 ```bash
@@ -145,6 +157,7 @@ scripts/daylight.gd        sun/sky/fog by time of day, night lights
 scripts/minimap.gd         corner minimap + full map, nearest street name
 scripts/ortho.gd           aerial photo: ground texture, roof colours, canopy/lawn tests
 tools/fetch_imagery.py     USGS orthophoto mosaic + pool detection
+tools/fetch_parcels.py     Utah SGID parcels (or a GeoJSON file) -> parcel=yes ways
 scripts/camera_rig.gd      orbit camera with spring arm
 tools/fetch_osm.py         Overpass downloader
 tests/run_tests.gd         headless engine tests (parser, geometry, physics)

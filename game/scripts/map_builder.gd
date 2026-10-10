@@ -111,6 +111,8 @@ var building_list: Array[Dictionary] = []
 var area_list: Array[Dictionary] = []
 ## Outer rings of lakes and ponds (for the minimap).
 var water_rings: Array[PackedVector2Array] = []
+## Lot boundaries (parcel=yes ways), when the map has them.
+var parcel_list: Array[PackedVector2Array] = []
 var _driveways: Array[PackedVector2Array] = []
 var _walks: Array = []  # [door point, outward dir]
 var _paving: SurfaceTool
@@ -153,6 +155,11 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 				footprints.append(_rect_of(pts))
 			continue
 		if tags.has("highway"):
+			continue
+		if tags.get("parcel") == "yes":
+			var ring := _clean_ring(data.way_points(way))
+			if ring.size() >= 3:
+				parcel_list.append(ring)
 			continue
 		var color = _area_color(tags)
 		if color != null:

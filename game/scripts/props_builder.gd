@@ -27,6 +27,7 @@ const FENCE_HEIGHT := 1.8
 const FENCE_PANEL := 2.4
 const FENCE_DEPTH := 11.0  # how far behind the back wall
 const FENCE_SIDE := 2.5   # how far beyond the side walls
+const FRONT_SETBACK := 9.0  # no lot-line fence this close to the street
 const LIGHT_SPACING := {"tertiary": 45.0, "secondary": 40.0, "primary": 40.0, "residential": 70.0, "unclassified": 60.0}
 
 ## Lamp-head material; the day/night cycle drives its emission.
@@ -62,7 +63,10 @@ func build(builder: MapBuilder, ground: Callable, seed: int = 1) -> Node3D:
 	_place_street_lights(builder.road_list)
 	_place_mailboxes(builder.road_list)
 	_place_stop_signs(builder.road_list)
-	_place_fences(builder.building_list)
+	if builder.parcel_list.is_empty():
+		_place_fences(builder.building_list)
+	else:
+		_place_parcel_fences(builder.parcel_list)
 
 	var meshes := {
 		"deciduous": _tree_mesh("deciduous"), "conifer": _tree_mesh("conifer"),
@@ -334,6 +338,24 @@ func _place_stop_signs(roads: Array[Dictionary]) -> void:
 			stats["stop_signs"] += 1
 
 
+## Fences on real lot lines: every parcel edge except street frontage, and
+## not within FRONT_SETBACK of a road (front yards are open). Shared
+## boundaries are fenced once.
+func _place_parcel_fences(parcels: Array[PackedVector2Array]) -> void:
+	for ring in parcels:
+		var area := absf(_signed_area(ring))
+		if area < 150.0 or area > 6000.0:
+			continue  # not a house lot
+		for i in ring.size():
+			var a := ring[i]
+			var b := ring[(i + 1) % ring.size()]
+			var mid := (a + b) * 0.5
+			if not _occ.is_free(mid.x, mid.y, 3.5, Occupancy.ROAD):
+				continue  # frontage
+			_fence_line(a, b, FRONT_SETBACK)
+	stats["parcel_fences"] = stats["fence_panels"]
+
+
 ## Backyard fences: a U behind each house (two sides running back from
 ## the rear corners, closed at the back), in FENCE_PANEL-metre panels that
 ## are skipped wherever something else already is.
@@ -365,7 +387,7 @@ func _place_fences(buildings: Array[Dictionary]) -> void:
 			_fence_line(seg[0], seg[1])
 
 
-func _fence_line(a: Vector2, b: Vector2) -> void:
+func _fence_line(a: Vector2, b: Vector2, road_clearance: float = 0.0) -> void:
 	var length := a.distance_to(b)
 	if length < FENCE_PANEL:
 		return
@@ -383,6 +405,10 @@ func _fence_line(a: Vector2, b: Vector2) -> void:
 		for q in [p0.lerp(p1, 0.1), mid, p0.lerp(p1, 0.9)]:
 			if not _occ.is_free(q.x, q.y, 0.6, Occupancy.BUILDING | Occupancy.ROAD | Occupancy.DRIVEWAY | Occupancy.PATH | Occupancy.WATER):
 				clear = false
+		if road_clearance > 0.0 and not _occ.is_free(mid.x, mid.y, road_clearance, Occupancy.ROAD):
+			clear = false  # front yard stays open
+		if not _occ.is_free(mid.x, mid.y, 0.5, Occupancy.FENCE):
+			clear = false  # the neighbour already fenced this line
 		if not clear:
 			continue
 		var y0: float = _ground.call(p0.x, p0.y)

@@ -169,3 +169,34 @@ class ImageryTests(unittest.TestCase):
             self.assertEqual(text.count('v="swimming_pool"'), 2)
             self.assertEqual(text.count("<node"), 9)
             self.assertTrue(text.rstrip().endswith("</osm>"))
+
+
+class ParcelTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import importlib
+        self.fp = importlib.import_module("fetch_parcels")
+
+    def test_rings_clipped_and_slivers_dropped(self) -> None:
+        bbox = (0.0, 0.0, 1.0, 1.0)
+        feats = [
+            {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[0.2, 0.2], [0.4, 0.2], [0.4, 0.4], [0.2, 0.4], [0.2, 0.2]]]}},
+            {"type": "Feature", "geometry": {"type": "MultiPolygon", "coordinates": [[[[0.9, 0.9], [1.5, 0.9], [1.5, 1.5], [0.9, 1.5], [0.9, 0.9]]]]}},
+            {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 2.0]]]}},
+            {"type": "Feature", "geometry": None},
+        ]
+        rings = self.fp.parcels_in_bbox(feats, bbox)
+        self.assertEqual(len(rings), 2)
+        self.assertEqual(sorted(set(rings[1])), [(0.9, 0.9), (0.9, 1.0), (1.0, 0.9), (1.0, 1.0)])
+
+    def test_write_parcels_repeatable(self) -> None:
+        import tempfile
+        osm = '<?xml version="1.0"?>\n<osm version="0.6">\n  <node id="1" lat="0" lon="0"/>\n</osm>\n'
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "t.osm"
+            p.write_text(osm)
+            ring = [(0.1, 0.1), (0.2, 0.1), (0.2, 0.2), (0.1, 0.2), (0.1, 0.1)]
+            self.fp.write_parcels(p, [ring])
+            self.fp.write_parcels(p, [ring, ring])
+            text = p.read_text()
+            self.assertEqual(text.count('v="parcel"') + text.count('k="parcel"'), 2)
+            self.assertEqual(text.count("<node"), 9)
