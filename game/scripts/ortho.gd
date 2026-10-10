@@ -110,3 +110,26 @@ func is_open_ground(x: float, z: float) -> bool:
 	if c.r < 0.0:
 		return false
 	return c.r > c.b * 1.1 and absf(c.r - c.g) < 0.18 and c.get_luminance() > 0.3 and c.get_luminance() < 0.75
+
+
+## Concrete / pale paving: light and nearly grey.
+func is_concrete(x: float, z: float) -> bool:
+	var c := color_at(x, z)
+	if c.r < 0.0:
+		return false
+	var mx := maxf(c.r, maxf(c.g, c.b))
+	var mn := minf(c.r, minf(c.g, c.b))
+	return c.get_luminance() > 0.5 and mx - mn < 0.13
+
+
+## Rough canopy radius (metres) around a canopy point: how far the dark
+## green continues in eight directions, averaged.
+func canopy_radius(x: float, z: float) -> float:
+	var total := 0.0
+	for k in 8:
+		var dir := Vector2.RIGHT.rotated(k * TAU / 8.0)
+		var r := 0.0
+		while r < 7.0 and is_canopy(x + dir.x * (r + 1.0), z + dir.y * (r + 1.0)):
+			r += 1.0
+		total += r + 0.5
+	return total / 8.0

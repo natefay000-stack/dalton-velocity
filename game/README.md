@@ -44,10 +44,12 @@ python3 game/tools/fetch_imagery.py game/maps/herriman.osm --pools
 
 Writes `herriman.ortho.png` + `.ortho.json` at ~0.6 m/pixel; the game drapes
 it over the terrain as the ground, samples each roof's real colour from it,
-puts trees where the canopy is and sage where the ground is dry. `--pools`
-finds backyard pools in the photo (blue blobs away from buildings and
-lakes) and adds them to the .osm as `leisure=swimming_pool`; they are
-carved and filled with water. About 2 minutes for a few km².
+puts a tree on every canopy blob (sized to the blob) and sage where the
+ground is dry, and places each house's garage door and driveway where the
+photo shows the concrete strip in front of it. `--pools` finds backyard
+pools in the photo (blue blobs away from buildings and lakes) and adds them
+to the .osm as `leisure=swimming_pool`; they are carved, filled with water
+and get a concrete deck. About 2 minutes for a few km².
 
 **Then the lot lines** (Utah SGID parcels, public):
 

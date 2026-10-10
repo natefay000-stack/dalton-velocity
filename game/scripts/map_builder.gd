@@ -369,6 +369,13 @@ func _paint_area(water_st: SurfaceTool, pts: PackedVector2Array, color: Color, i
 	var grown := Geometry2D.offset_polygon(ring, 0.3 if pool else 4.0)
 	if not grown.is_empty() and absf(_signed_area(grown[0])) > absf(_signed_area(ring)):
 		surface = grown[0]
+	if pool:
+		# Concrete deck: a 1.5 m apron around the water.
+		var apron := Geometry2D.offset_polygon(ring, 1.5)
+		if not apron.is_empty():
+			for strip in Geometry2D.clip_polygons(apron[0], surface):
+				if _add_flat_polygon(_paving, strip, level + 0.08, COLOR_SIDEWALK):
+					stats["pool_decks"] = stats.get("pool_decks", 0) + 1
 	return _add_flat_polygon(water_st, surface, level, color if pool else COLOR_WATER)
 
 
@@ -659,16 +666,22 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 	# On a slope: walls start below the lowest corner (so no gap shows on the
 	# downhill side) and the height is measured from the average ground.
 	var g_min := INF
+	var g_max := -INF
 	var g_sum := 0.0
 	for p in ring:
 		var g := _ground(p.x, p.y)
 		g_min = minf(g_min, g)
+		g_max = maxf(g_max, g)
 		g_sum += g
 	var g_mean := g_sum / ring.size()
 	var y0: float = hs[0] + (g_min - 0.5 if _terrain != null else 0.0)
 	var y1: float = hs[1] + (g_mean if _terrain != null else 0.0)
 	var color: Color = BUILDING_PALETTE[absi(hash(id)) % BUILDING_PALETTE.size()]
 	var base := g_mean if _terrain != null else 0.0
+	# On a sloped lot the eaves still clear the uphill side by a full storey,
+	# so the uphill wall keeps room for its door and garage.
+	var eave_min: float = (g_max if _terrain != null else 0.0) + 2.7
+	y1 = maxf(y1, eave_min)
 	# A quarter of the houses are brick.
 	var brick: bool = absi(hash(id * 7 + 3)) % 4 == 0 and hs[1] < 12.0
 	if brick:
@@ -684,7 +697,7 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 	if not hip.is_empty():
 		ring = hip["corners"]
 		var rise: float = minf(hip["hw"] * HIP_PITCH, 3.5)
-		y1 = maxf(base + 2.7, y1 - rise)
+		y1 = maxf(eave_min, y1 - rise)
 		ridge = y1 + rise
 		gable = tags.get("roof:shape") == "gabled" or (tags.get("roof:shape") == null and absi(hash(id * 31)) % 5 < 2)
 		stats["hip_roofs"] = stats.get("hip_roofs", 0) + 1
@@ -960,26 +973,84 @@ func _add_facade(st: SurfaceTool, a: Vector2, b: Vector2, out2: Vector2, ground:
 		var cursor := 0.7
 		var end := length - 0.7
 		if level == 0 and is_front:
+			# Garage (2 bays) where the photo shows the driveway's concrete,
+			# else at one end; front door beside it; windows in the gaps.
+			var g0 := -1.0
+			var g1 := -1.0
 			if length >= 9.0:
-				# Garage at one end, 2 bays.
-				place.call(cursor, cursor + 4.9, y_base + 0.05, y_base + 2.25, COLOR_GARAGE, 0.03)
+				var gc := _garage_from_photo(a, dir, out2, length)
+				if gc < 0.0:
+					gc = cursor + 2.45
+				g0 = gc - 2.45
+				g1 = gc + 2.45
+				place.call(g0, g1, y_base + 0.05, y_base + 2.25, COLOR_GARAGE, 0.03)
 				for seam in [0.6, 1.2, 1.8]:
-					place.call(cursor + 0.05, cursor + 4.85, y_base + seam - 0.015, y_base + seam + 0.015, COLOR_GARAGE.darkened(0.25), 0.04)
-				garage_at = cursor + 2.45
-				cursor += 4.9 + 0.9
-			if end - cursor >= 1.6:
-				var door_s := cursor + 0.6
+					place.call(g0 + 0.05, g1 - 0.05, y_base + seam - 0.015, y_base + seam + 0.015, COLOR_GARAGE.darkened(0.25), 0.04)
+				garage_at = gc
+			# Door in the larger remaining span, right next to the garage.
+			var left_span := (g0 - cursor) if g0 >= 0.0 else 0.0
+			var right_span := (end - g1) if g1 >= 0.0 else (end - cursor)
+			var door_s := -1.0
+			if g0 < 0.0:
+				if right_span >= 1.6:
+					door_s = cursor + 0.6
+			elif right_span >= left_span and right_span >= 1.6:
+				door_s = g1 + 0.6 + 0.48
+			elif left_span >= 1.6:
+				door_s = g0 - 0.6 - 0.48
+			if door_s >= 0.0:
 				place.call(door_s - 0.48, door_s + 0.48, y_base + 0.05, y_base + 2.1, COLOR_DOOR, 0.03)
 				_walks.append([a + dir * door_s + out2 * 0.05, out2])
-				cursor = door_s + 0.48 + 0.7
-		# Windows fill what's left, centred in equal bays.
-		var span := end - cursor
-		var count := int(span / 2.7)
-		if count <= 0 and span >= 1.5:
-			count = 1
-		for k in count:
-			win.call(cursor + span * (k + 0.5) / count, y_base)
+			# Windows in whatever is left, in order along the wall.
+			var blocks: Array = []
+			if g0 >= 0.0:
+				blocks.append([g0 - 0.6, g1 + 0.6])
+			if door_s >= 0.0:
+				blocks.append([door_s - 1.1, door_s + 1.1])
+			blocks.sort_custom(func(p, q): return p[0] < q[0])
+			var at := cursor
+			for blk in blocks:
+				_fill_windows(win, at, minf(blk[0], end), y_base)
+				at = maxf(at, blk[1])
+			_fill_windows(win, at, end, y_base)
+			continue
+		_fill_windows(win, cursor, end, y_base)
 	return garage_at
+
+
+func _fill_windows(win: Callable, s0: float, s1: float, y_base: float) -> void:
+	var span := s1 - s0
+	if span < 1.5:
+		return
+	var count := maxi(1, int(span / 2.7))
+	for k in count:
+		win.call(s0 + span * (k + 0.5) / count, y_base)
+
+
+## Centre (along the wall from `a`) of the driveway's concrete in the photo,
+## found by scanning outward from each point of the front wall toward the
+## street; -1 if the photo has no clear strip.
+func _garage_from_photo(a: Vector2, dir: Vector2, out2: Vector2, length: float) -> float:
+	if ortho == null:
+		return -1.0
+	var best_s := -1.0
+	var best := 0
+	var s := 2.6
+	while s <= length - 2.6:
+		var hits := 0
+		var d := 1.5
+		while d < 20.0:
+			var p := a + dir * s + out2 * d
+			if occupancy.get_at(p.x, p.y) & Occupancy.ROAD:
+				break
+			if ortho.is_concrete(p.x, p.y):
+				hits += 1
+			d += 1.5
+		if hits > best:
+			best = hits
+			best_s = s
+		s += 0.5
+	return best_s if best >= 3 else -1.0
 
 
 func _quad_wall(st: SurfaceTool, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, normal: Vector3, col: Color) -> void:

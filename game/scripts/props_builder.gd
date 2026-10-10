@@ -56,8 +56,11 @@ func build(builder: MapBuilder, ground: Callable, seed: int = 1) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Props"
 
-	_place_yard_trees(builder.building_list)
-	_place_area_trees(builder.area_list)
+	if _ortho != null:
+		_place_canopy_trees()
+	else:
+		_place_yard_trees(builder.building_list)
+		_place_area_trees(builder.area_list)
 	_place_scrub()
 	_place_parked_cars(builder.road_list)
 	_place_street_lights(builder.road_list)
@@ -144,6 +147,26 @@ func _place_area_trees(areas: Array[Dictionary]) -> void:
 			var kind := "conifer" if (forest and _rng.randf() < 0.6) or _rng.randf() < 0.25 else "deciduous"
 			if _try_tree(p, kind, 1.5 if forest else 3.0):
 				placed += 1
+
+
+## With a photo: a tree wherever the canopy is, sized to the blob, over the
+## whole map (yards, parks, streets, hillside alike).
+func _place_canopy_trees() -> void:
+	var step := 2.0
+	var z := _bounds.position.y
+	while z < _bounds.end.y:
+		var x := _bounds.position.x
+		while x < _bounds.end.x:
+			var p := Vector2(x + _rng.randf_range(-0.6, 0.6), z + _rng.randf_range(-0.6, 0.6))
+			if _ortho.is_canopy(p.x, p.y) and _occ.is_free(p.x, p.y, 1.2, Occupancy.BUILDING | Occupancy.ROAD | Occupancy.WATER | Occupancy.PATH):
+				var r: float = _ortho.canopy_radius(p.x, p.y)
+				if r >= 1.5 and _occ.is_free(p.x, p.y, r * 0.75, Occupancy.PROP):
+					var kind := "conifer" if _rng.randf() < 0.2 else "deciduous"
+					_add_tree(p, kind, clampf(r / 2.2, 0.6, 1.9))
+					_occ.mark_disc(p.x, p.y, r * 0.8, Occupancy.PROP)
+					stats["trees"] += 1
+			x += step
+		z += step
 
 
 ## Sparse sage/juniper over the open ground away from houses.

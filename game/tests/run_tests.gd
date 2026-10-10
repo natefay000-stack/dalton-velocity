@@ -562,10 +562,12 @@ func _write_test_ortho(d: OsmData, base: String) -> void:
 			var mz := -280.0 + y * 2.0
 			if mx > -211.0 and mx < -192.0 and mz > -211.0 and mz < -189.0:
 				img.set_pixel(x, y, Color(0.6, 0.15, 0.1))
-			elif mx > -100.0 and mx < -60.0 and mz > 100.0 and mz < 140.0:
+			elif mx > -100.0 and mx < -60.0 and mz > -180.0 and mz < -140.0:
 				img.set_pixel(x, y, Color(0.15, 0.32, 0.12))  # canopy
 			elif mx > 120.0 and mz > 120.0:
 				img.set_pixel(x, y, Color(0.62, 0.55, 0.40))  # dry ground
+			elif mx > -197.0 and mx < -193.0 and mz > -220.0 and mz < -211.0:
+				img.set_pixel(x, y, Color(0.80, 0.80, 0.78))  # driveway concrete, NW house
 	img.save_png(base + ".ortho.png")
 	var f := FileAccess.open(base + ".ortho.json", FileAccess.WRITE)
 	f.store_string(JSON.stringify({"south": b["minlat"], "west": b["minlon"], "north": b["maxlat"], "east": b["maxlon"],
@@ -582,7 +584,7 @@ func test_ortho() -> void:
 	check(o.load_for(base + ".osm", d) == OK, "ortho loads from <map>.ortho.png/json")
 	check(o.rect.grow(1.0).encloses(d.bounds), "ortho covers the map bounds")
 	check(o.uv(-280.0, -280.0).length() < 0.01 and (o.uv(280.0, 280.0) - Vector2.ONE).length() < 0.01, "uv mapping spans the photo")
-	check(o.is_canopy(-80.0, 120.0) and not o.is_canopy(0.0, 0.0), "canopy detected where the photo is dark green")
+	check(o.is_canopy(-80.0, -160.0) and not o.is_canopy(0.0, 0.0), "canopy detected where the photo is dark green")
 	check(o.is_lawn(0.0, 0.0) and not o.is_lawn(200.0, 200.0), "lawn vs dry ground")
 	check(o.is_open_ground(200.0, 200.0), "open ground where the photo is tan")
 	check(Ortho.new().load_for("user://nope.osm", d) == ERR_FILE_NOT_FOUND, "missing photo is a clean miss")
@@ -594,7 +596,6 @@ func test_ortho() -> void:
 	t.ortho = o
 	var b := MapBuilder.new()
 	b.ortho = o
-	b.facades = false
 	var map := b.build(d, t)
 	root.add_child(map)
 	await physics_frame
@@ -616,6 +617,27 @@ func test_ortho() -> void:
 				red += 1
 	check(checked > 0 and red == checked, "roof colour sampled from the photo (%d/%d red)" % [red, checked])
 	check(b.stats.get("pools", 0) == 1, "pool carved from leisure=swimming_pool (%d)" % b.stats.get("pools", 0))
+	check(b.stats.get("pool_decks", 0) >= 1, "pool gets a concrete deck")
+	var drive_x := INF
+	for r in b.road_list:
+		if r["service"] == "driveway" and r["pts"][0].y < -205.0 and r["pts"][0].x < -185.0 and r["pts"][0].x > -215.0:
+			drive_x = r["pts"][0].x
+	check(absf(drive_x + 195.0) < 1.5, "garage/driveway placed on the photo's concrete strip (x=%.1f)" % drive_x)
+	# Trees land on the canopy patch (x -100..-60, z -180..-140) and nowhere on plain lawn.
+	var props := PropsBuilder.new()
+	var node := props.build(b, func(_x, _z): return 0.0, 3)
+	root.add_child(node)
+	var in_patch := 0
+	var outside := 0
+	for key in ["deciduous", "conifer"]:
+		for xf in props.instances.get(key, []):
+			var org: Vector3 = xf.origin
+			if org.x > -102.0 and org.x < -58.0 and org.z > -182.0 and org.z < -138.0:
+				in_patch += 1
+			else:
+				outside += 1
+	check(in_patch >= 6 and outside == 0, "trees only where the photo has canopy (%d in patch, %d elsewhere)" % [in_patch, outside])
+	node.queue_free()
 	check(b.occupancy.get_at(-201.0, -181.0) & Occupancy.WATER, "pool is water in the occupancy grid")
 	map.queue_free()
 	await process_frame
