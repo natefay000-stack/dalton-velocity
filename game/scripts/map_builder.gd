@@ -240,6 +240,8 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 				best_spawn_score = score
 				_set_spawn(pts)
 
+	_add_crosswalks()
+
 	# Pass 3: buildings.
 	for way in data.ways:
 		var tags: Dictionary = way["tags"]
@@ -745,6 +747,8 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 
 	if not hip.is_empty():
 		_add_hip_roof(_roofs, hip, y1, ridge, _roof_color(ring, id), gable)
+		if absi(hash(id * 13 + 5)) % 3 == 0:
+			_add_chimney(hip, y1, ridge)
 		return true
 
 	# Flat roof (gravel/membrane; world-mapped UVs). If triangulation fails
@@ -1001,6 +1005,7 @@ func _add_facade(st: SurfaceTool, a: Vector2, b: Vector2, out2: Vector2, ground:
 			if door_s >= 0.0:
 				place.call(door_s - 0.48, door_s + 0.48, y_base + 0.05, y_base + 2.1, COLOR_DOOR, 0.03)
 				_walks.append([a + dir * door_s + out2 * 0.05, out2])
+				_add_porch(a + dir * door_s, dir, out2, y_base, wall)
 			# Windows in whatever is left, in order along the wall.
 			var blocks: Array = []
 			if g0 >= 0.0:
@@ -1056,6 +1061,134 @@ func _garage_from_photo(a: Vector2, dir: Vector2, out2: Vector2, length: float) 
 func _quad_wall(st: SurfaceTool, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, normal: Vector3, col: Color) -> void:
 	_tri(st, p0, p1, p2, normal, col)
 	_tri(st, p0, p2, p3, normal, col)
+
+
+## Axis-aligned-in-(u, v) box: `u` along, `v` across (unit, horizontal).
+func _box_uv(st: SurfaceTool, center: Vector3, u: Vector2, v: Vector2, size: Vector3, col: Color) -> void:
+	var hu := u * size.x * 0.5
+	var hv := v * size.z * 0.5
+	var y0 := center.y - size.y * 0.5
+	var y1 := center.y + size.y * 0.5
+	var c2 := Vector2(center.x, center.z)
+	var corners: Array[Vector2] = [c2 - hu - hv, c2 + hu - hv, c2 + hu + hv, c2 - hu + hv]
+	for i in 4:
+		var p: Vector2 = corners[i]
+		var q: Vector2 = corners[(i + 1) % 4]
+		var n2 := (q - p).normalized()
+		var n := Vector3(n2.y, 0.0, -n2.x)
+		_quad_wall(st, Vector3(p.x, y0, p.y), Vector3(q.x, y0, q.y), Vector3(q.x, y1, q.y), Vector3(p.x, y1, p.y), n, col)
+	var top: Array = []
+	for p in corners:
+		top.append(Vector3(p.x, y1, p.y))
+	_tri(st, top[0], top[1], top[2], Vector3.UP, col)
+	_tri(st, top[0], top[2], top[3], Vector3.UP, col)
+
+
+## Small flat-roofed porch over the front door: two posts and a slab.
+func _add_porch(door: Vector2, dir: Vector2, out2: Vector2, y_base: float, wall: Color) -> void:
+	var depth := 1.6
+	var width := 2.1
+	var slab_y := y_base + 2.5
+	var slab_c := door + out2 * (depth * 0.5)
+	_box_uv(_trim, Vector3(slab_c.x, slab_y + 0.08, slab_c.y), dir, out2, Vector3(width, 0.16, depth + 0.1), wall.darkened(0.08))
+	for sx in [-1.0, 1.0]:
+		var p: Vector2 = door + dir * sx * (width * 0.5 - 0.15) + out2 * (depth - 0.15)
+		var foot := (_ground(p.x, p.y) if _terrain != null else 0.0) - 0.05  # posts stand on the ground
+		_box_uv(_trim, Vector3(p.x, (foot + slab_y) * 0.5, p.y), dir, out2, Vector3(0.16, slab_y - foot, 0.16), COLOR_FRAME)
+	stats["porches"] = stats.get("porches", 0) + 1
+
+
+## Brick chimney through the roof, a third of the way along the ridge.
+func _add_chimney(hip: Dictionary, eave: float, ridge: float) -> void:
+	var c: Vector2 = hip["center"]
+	var u: Vector2 = hip["u"]
+	var v: Vector2 = hip["v"]
+	var p: Vector2 = c + u * hip["hl"] * 0.35 + v * hip["hw"] * 0.25
+	var top := ridge + 0.7
+	var bottom := ridge - (ridge - eave) * 0.25 - 0.3  # just under the roof slope there
+	_box_uv(_bricks, Vector3(p.x, (top + bottom) * 0.5, p.y), u, v, Vector3(0.7, top - bottom, 0.7), Color(0.55, 0.32, 0.25))
+	_box_uv(_trim, Vector3(p.x, top + 0.05, p.y), u, v, Vector3(0.85, 0.1, 0.85), Color(0.6, 0.6, 0.58))
+	stats["chimneys"] = stats.get("chimneys", 0) + 1
+
+
+## Zebra stripes across every arm of a 3+ way junction of curbed streets.
+## Stripe heights follow the road ribbon itself (not the raw terrain), so
+## they sit on the asphalt where two road beds blend at the junction.
+func _add_crosswalks() -> void:
+	var junctions: Dictionary = {}
+	for r in road_list:
+		if not (r["highway"] in CURB_TYPES):
+			continue
+		var pts: PackedVector2Array = r["pts"]
+		if pts.size() < 2:
+			continue
+		var n := pts.size()
+		var sub := _subdivide(pts, DRAPE_STEP) if _terrain != null else pts
+		for end in [[pts[0], (pts[1] - pts[0]).normalized()], [pts[n - 1], (pts[n - 2] - pts[n - 1]).normalized()]]:
+			var key := Vector2i(roundi(end[0].x / 1.5), roundi(end[0].y / 1.5))
+			if not junctions.has(key):
+				junctions[key] = []
+			junctions[key].append({"p": end[0], "out": end[1], "width": r["width"], "sub": sub})
+	for key in junctions:
+		var arms: Array = junctions[key]
+		if arms.size() < 3:
+			continue
+		var widest := 0.0
+		for a in arms:
+			widest = maxf(widest, a["width"])
+		for a in arms:
+			var out: Vector2 = a["out"]
+			var side := Vector2(-out.y, out.x)
+			var d: float = widest * 0.5 + CURB_WIDTH + 1.2
+			var centre: Vector2 = a["p"] + out * d
+			var half: float = a["width"] * 0.5 - 0.3
+			var count := maxi(2, int(half * 2.0 / 0.9))
+			var lift := MARKING_Y - ROAD_Y + 0.01
+			for k in count:
+				var s := -half + (k + 0.5) * (half * 2.0 / count)
+				var q := centre + side * s
+				var c0 := q - out * 1.2 - side * 0.225
+				var c1 := q - out * 1.2 + side * 0.225
+				var c2 := q + out * 1.2 + side * 0.225
+				var c3 := q + out * 1.2 - side * 0.225
+				var v0 := Vector3(c0.x, _ribbon_height(a["sub"], a["width"] * 0.5, c0) + lift, c0.y)
+				var v1 := Vector3(c1.x, _ribbon_height(a["sub"], a["width"] * 0.5, c1) + lift, c1.y)
+				var v2 := Vector3(c2.x, _ribbon_height(a["sub"], a["width"] * 0.5, c2) + lift, c2.y)
+				var v3 := Vector3(c3.x, _ribbon_height(a["sub"], a["width"] * 0.5, c3) + lift, c3.y)
+				_tri_up(_paving, v0, v1, v2, COLOR_LANE_WHITE)
+				_tri_up(_paving, v0, v2, v3, COLOR_LANE_WHITE)
+			stats["crosswalks"] = stats.get("crosswalks", 0) + 1
+
+
+## Height of the road ribbon drawn along `pts` (half width `half`) at `p`:
+## the same bilinear surface `_add_ribbon` builds, so markings laid on it
+## with this height never sink into the asphalt.
+func _ribbon_height(pts: PackedVector2Array, half: float, p: Vector2) -> float:
+	var best := INF
+	var best_i := 0
+	var best_t := 0.0
+	for i in pts.size() - 1:
+		var seg := pts[i + 1] - pts[i]
+		var len2 := seg.length_squared()
+		if len2 < 1e-8:
+			continue
+		var t := clampf((p - pts[i]).dot(seg) / len2, 0.0, 1.0)
+		var d2 := p.distance_squared_to(pts[i] + seg * t)
+		if d2 < best:
+			best = d2
+			best_i = i
+			best_t = t
+	var a := pts[best_i]
+	var b := pts[best_i + 1]
+	var dir := (b - a).normalized()
+	var normal := Vector2(-dir.y, dir.x)
+	var u := clampf((p - (a + (b - a) * best_t)).dot(normal) / half, -1.0, 1.0)
+	var y_at := func(c: Vector2) -> float:
+		var l := c + normal * half
+		var r := c - normal * half
+		return lerpf(_ground(r.x, r.y), _ground(l.x, l.y), (u + 1.0) * 0.5)
+	return lerpf(y_at.call(a), y_at.call(b), best_t) + ROAD_Y
+
 
 
 func make_ground(bounds: Rect2) -> StaticBody3D:

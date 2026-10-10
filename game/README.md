@@ -84,7 +84,8 @@ versioned.
   through roads, and driveways synthesised from each house's garage to the
   street.
 - **Houses** with hipped or gabled roofs, windows on every wall, a front
-  door and a garage door on the wall that faces the street.
+  door under a small porch and a garage door on the wall that faces the
+  street; a third have a brick chimney.
 - **Trees** in yards, parks and woods, sage scrub on the open hillside,
   street lights, and parked cars (sedans, SUVs, pickups in nine colours)
   in driveways and along kerbs. All placed on a 1 m occupancy grid so
@@ -100,13 +101,14 @@ versioned.
   shingle rows on roofs that follow each roof plane, tyre-wear lanes along
   roads, concrete paving, grainy ground.
 - **Street furniture**: mailboxes at driveways, stop signs where minor roads
-  meet bigger ones (and all-way at 4-way minor junctions), front steps and a
-  walk from each front door to the driveway, and vinyl backyard fences
-  around most houses.
+  meet bigger ones (and all-way at 4-way minor junctions), zebra crossings
+  on every arm of a junction, front steps and a walk from each front door
+  to the driveway, and vinyl backyard fences around most houses.
 - **A visible driver** (your character) when you're in the car.
 - **Day and night**: a 24-minute day (`start_hour` on Main; `[`/`]` shift it).
   Low golden sun at dawn and dusk; at night the street lamps, house windows
-  and your headlights come on. Real lights sit on the 24 lamps nearest you.
+  and every moving car's head- and taillights come on. Real lights sit on
+  the 24 lamps and the 4 cars nearest you.
 
 Placement is seeded from the map file name, so a given map always looks the
 same.

@@ -639,6 +639,8 @@ func test_ortho() -> void:
 	check(checked > 0 and red == checked, "roof colour sampled from the photo (%d/%d red)" % [red, checked])
 	check(b.stats.get("pools", 0) == 1, "pool carved from leisure=swimming_pool (%d)" % b.stats.get("pools", 0))
 	check(b.stats.get("pool_decks", 0) >= 1, "pool gets a concrete deck")
+	check(b.stats.get("porches", 0) >= 10 and b.stats.get("chimneys", 0) >= 3, "houses get porches and chimneys (%d, %d)" % [b.stats.get("porches", 0), b.stats.get("chimneys", 0)])
+	check(b.stats.get("crosswalks", 0) >= 8, "crosswalks striped at junctions (%d)" % b.stats.get("crosswalks", 0))
 	var drive_x := INF
 	for r in b.road_list:
 		if r["service"] == "driveway" and r["pts"][0].y < -205.0 and r["pts"][0].x < -185.0 and r["pts"][0].x > -215.0:
