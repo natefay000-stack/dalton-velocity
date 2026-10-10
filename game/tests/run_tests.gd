@@ -48,6 +48,7 @@ func _run() -> void:
 	print("daylight")
 	test_daylight()
 	test_audio()
+	await test_wildlife()
 	print("physics")
 	await test_gameplay()
 	print("%s (%d failure%s)" % ["PASSED" if failures == 0 else "FAILED", failures, "" if failures == 1 else "s"])
@@ -704,6 +705,46 @@ func test_ortho() -> void:
 	await process_frame
 
 
+func test_wildlife() -> void:
+	var d := OsmData.new()
+	d.parse_file("res://maps/sample.osm")
+	var b := MapBuilder.new()
+	b.facades = false
+	var map := b.build(d)
+	root.add_child(map)
+	var w: Node3D = load("res://scripts/wildlife.gd").new()
+	root.add_child(w)
+	w.setup(b.occupancy, null, func(_x, _z): return 0.0, 12, 4)
+	check(w.deer.size() >= 6, "deer spawned on open ground (%d)" % w.deer.size())
+	var bad := 0
+	for dr in w.deer:
+		var p: Vector2 = dr["pos"]
+		if not b.occupancy.is_free(p.x, p.y, 20.0, Occupancy.BUILDING | Occupancy.ROAD):
+			bad += 1
+	check(bad == 0, "deer keep well away from houses and roads (%d close)" % bad)
+	check(w.birds.size() == 14, "a flock of birds overhead")
+	# Walk up to a deer: it bolts, stays off roads and houses, then settles.
+	var victim: Dictionary = w.deer[0]
+	var start: Vector2 = victim["pos"]
+	w.set_focus(Vector3(start.x + 8.0, 0.0, start.y))
+	var off := 0
+	for i in 360:
+		await physics_frame
+		var q: Vector2 = victim["pos"]
+		if b.occupancy.get_at(q.x, q.y) & (Occupancy.BUILDING | Occupancy.ROAD | Occupancy.WATER):
+			off += 1
+	var fled: float = (victim["pos"] as Vector2).distance_to(start)
+	check(victim["state"] == "flee" or fled > 10.0, "deer flees the player (%.1f m)" % fled)
+	check(fled > 10.0 and off == 0, "deer runs clear without crossing roads or houses (%.1f m, %d bad samples)" % [fled, off])
+	w.set_focus(Vector3(1000, 0, 1000))
+	for i in 900:
+		await physics_frame
+	check(victim["state"] != "flee", "deer calms down once you are gone")
+	w.queue_free()
+	map.queue_free()
+	await process_frame
+
+
 func test_audio() -> void:
 	var a: Node = load("res://scripts/audio.gd").new()
 	root.add_child(a)
@@ -856,6 +897,7 @@ func test_gameplay() -> void:
 	main.pause_menu.toggle()
 	check(not main.pause_menu.open and not paused, "resume unpauses")
 	main.daylight.hour = 10.0
+	check(main._place_name("res://maps/herriman.osm") == "HERRIMAN" and main._place_name("res://maps/sample.osm") == "SAMPLE TOWN", "title card names the place")
 	# HUD banner shows the street you're on.
 	main.overlay.update(0.5, {"street": "Main Street", "clock": "10:00", "driving": true, "speed_ms": 10.0})
 	check(main.overlay.banner.text == "Main Street" and main.overlay.banner.modulate.a > 0.9, "street banner fades in")

@@ -12,6 +12,9 @@ var clock: Label
 var gps: Label
 
 var _banner_time := 0.0
+var _splash: Label
+var _splash_dim: ColorRect
+var _splash_time := -1.0
 var _hints_time := 0.0
 var _last_street := ""
 var _last_hints := ""
@@ -58,6 +61,19 @@ func _ready() -> void:
 	gps.offset_left = -246
 	gps.offset_right = -16
 	gps.offset_top = 272
+	_splash_dim = ColorRect.new()
+	_splash_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_splash_dim.color = Color(0, 0, 0, 1)
+	_splash_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_splash_dim.visible = false
+	add_child(_splash_dim)
+	_splash = _label(Vector2.ZERO, 64, HORIZONTAL_ALIGNMENT_CENTER)
+	_splash.set_anchors_preset(Control.PRESET_CENTER)
+	_splash.offset_left = -500
+	_splash.offset_right = 500
+	_splash.offset_top = -60
+	_splash.offset_bottom = 60
+	_splash.visible = false
 	var credit := _label(Vector2.ZERO, 12, HORIZONTAL_ALIGNMENT_RIGHT)
 	credit.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	credit.offset_left = -360
@@ -79,8 +95,24 @@ func _label(pos: Vector2, size: int, align: int) -> Label:
 	return l
 
 
+## Title card on load: black, the place name, then both fade away.
+func splash(title: String) -> void:
+	_splash.text = title
+	_splash.visible = true
+	_splash_dim.visible = true
+	_splash_time = 0.0
+
+
 ## Called every frame by main with the current state.
 func update(delta: float, state: Dictionary) -> void:
+	if _splash_time >= 0.0:
+		_splash_time += delta
+		_splash_dim.color.a = clampf(1.0 - (_splash_time - 1.2) / 1.5, 0.0, 1.0)
+		_splash.modulate.a = minf(clampf(_splash_time / 0.6, 0.0, 1.0), clampf(1.0 - (_splash_time - 3.0) / 1.2, 0.0, 1.0))
+		if _splash_time > 4.5:
+			_splash_time = -1.0
+			_splash.visible = false
+			_splash_dim.visible = false
 	# Hints: shown on any change of mode, then fade out.
 	var h: String = state.get("hints", "")
 	if h != _last_hints:

@@ -24,6 +24,7 @@ const Minimap := preload("res://scripts/minimap.gd")
 const Hud := preload("res://scripts/hud.gd")
 const GameAudio := preload("res://scripts/audio.gd")
 const PauseMenu := preload("res://scripts/pause_menu.gd")
+const Wildlife := preload("res://scripts/wildlife.gd")
 const Ortho := preload("res://scripts/ortho.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
@@ -38,6 +39,9 @@ var hud: Label  # the hint lines (kept for tools); the overlay is `overlay`
 var overlay: CanvasLayer
 var audio: Node
 var pause_menu: CanvasLayer
+var wildlife: Node3D = null
+## Deer on the open ground (0 to disable).
+@export var deer_count := 18
 var in_car := false
 var map_bounds := Rect2()
 var terrain: Terrain = null
@@ -109,6 +113,11 @@ func _ready() -> void:
 			traffic.set_night(daylight.is_night)
 		if pedestrians != null:
 			pedestrians.set_threats([traffic] if traffic != null else [])
+		if deer_count > 0:
+			wildlife = Wildlife.new()
+			wildlife.name = "Wildlife"
+			add_child(wildlife)
+			wildlife.setup(builder.occupancy, builder.ortho, ground_height, deer_count, hash(path) + 2)
 		map_bounds = data.bounds
 		print("Loaded %s: %d roads, %d buildings, %d areas (%d skipped)" % [
 			path, builder.stats["roads"], builder.stats["buildings"],
@@ -155,6 +164,15 @@ func _ready() -> void:
 		add_child(minimap)
 		minimap.setup(_builder, map_bounds, player, traffic, pedestrians)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	overlay.splash(_place_name(path))
+
+
+## "herriman.osm" -> "HERRIMAN"; the sample map gets a friendlier name.
+func _place_name(path: String) -> String:
+	var base := path.get_file().get_basename()
+	if base == "sample":
+		return "SAMPLE TOWN"
+	return base.replace("_", " ").replace("-", " ").to_upper()
 
 
 func ground_height(x: float, z: float) -> float:
@@ -310,6 +328,8 @@ func _process(delta: float) -> void:
 		traffic.set_focus(p)
 		for d in traffic.take_honks():
 			audio.ai_honk(d)
+	if wildlife != null:
+		wildlife.set_focus(p)
 	if in_car and Input.is_action_just_pressed("horn") and pedestrians != null:
 		pedestrians.honk(car.global_position)
 	daylight.set_focus(p)

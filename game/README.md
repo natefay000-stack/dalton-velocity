@@ -104,7 +104,22 @@ versioned.
   meet bigger ones (and all-way at 4-way minor junctions), zebra crossings
   on every arm of a junction, front steps and a walk from each front door
   to the driveway, and vinyl backyard fences around most houses.
+- **Suburb life**: trampolines in backyards, basketball hoops at the top
+  of driveways, trash and recycling bins at the kerb, porch lights by
+  every front door.
+- **Wildlife**: mule deer grazing the open ground around the
+  neighbourhood (18 by default, `deer_count`) that bolt when you come
+  near, keeping off roads and out of yards, and a flock of birds overhead.
+- **Pedestrians react**: a walker with a car bearing down on them stops
+  and steps aside; your horn makes nearby walkers stop and look. AI cars
+  stuck behind something honk.
+- **Sound** with no audio files: engine note through four gears, wind with
+  speed, footsteps at your pace, birds by day, crickets at night, tyre
+  skid on the handbrake, your horn and the AI's.
 - **A visible driver** (your character) when you're in the car.
+- **Game feel**: a title card naming the place on load, a street-name
+  banner when you turn onto a new street, speedometer, clock, GPS
+  waypoints with a route on the minimap, a pause menu and gamepad support.
 - **Day and night**: a 24-minute day (`start_hour` on Main; `[`/`]` shift it).
   Low golden sun at dawn and dusk; at night the street lamps, house windows
   and every moving car's head- and taillights come on. Real lights sit on
@@ -161,7 +176,12 @@ scripts/pedestrians.gd     walkers on the footpath graph
 scripts/traffic.gd         AI cars on the road graph (kinematic bodies)
 scripts/surfaces.gd        procedural materials: grain, brick, shingle, road wear
 scripts/daylight.gd        sun/sky/fog by time of day, night lights
-scripts/minimap.gd         corner minimap + full map, nearest street name
+scripts/minimap.gd         corner minimap + full map, nearest street name, waypoints
+scripts/road_graph.gd      drivable road graph + shortest route (GPS line)
+scripts/hud.gd             title card, street banner, speedometer, clock, hints
+scripts/pause_menu.gd      Esc menu: resume, controls, time of day, quit
+scripts/audio.gd           procedural engine/wind/footsteps/birds/crickets/horn
+scripts/wildlife.gd        deer that graze and flee, birds overhead
 scripts/ortho.gd           aerial photo: ground texture, roof colours, canopy/lawn tests
 tools/fetch_imagery.py     USGS orthophoto mosaic + pool detection
 tools/fetch_parcels.py     Utah SGID parcels (or a GeoJSON file) -> parcel=yes ways
