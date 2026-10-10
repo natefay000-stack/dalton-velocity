@@ -25,6 +25,7 @@ import argparse
 import io
 import math
 import re
+import ssl
 import struct
 import sys
 import time
@@ -75,18 +76,42 @@ LAND_USE = {
 # --------------------------------------------------------------------------
 # HTTP
 
+CERT_HINT = (
+    "TLS certificate verification failed. The python.org macOS installer ships "
+    "without root certificates; fix with EITHER\n"
+    "  python3 -m pip install certifi\n"
+    "OR double-click 'Install Certificates.command' in /Applications/Python 3.x/"
+)
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """System certificates, or certifi's bundle when that is installed."""
+    try:
+        import certifi  # type: ignore
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+_SSL = _ssl_context()
+
+
 def http_get(url: str, headers: dict[str, str] | None = None, timeout: int = 120) -> bytes:
     req = urllib.request.Request(url, headers=headers or {})
     last: Exception | None = None
     for attempt in range(5):
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout, context=_SSL) as resp:
                 return resp.read()
         except urllib.error.HTTPError as exc:
             if exc.code not in (429, 500, 502, 503, 504):
                 raise
             last = exc
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, ssl.SSLCertVerificationError):
+                raise RuntimeError(CERT_HINT) from exc
+            last = exc
+        except (TimeoutError, ConnectionError) as exc:
             last = exc
         time.sleep(2 ** attempt)
     raise RuntimeError(f"GET {url} failed: {last}")
