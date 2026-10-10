@@ -57,6 +57,8 @@ func _ready() -> void:
 		print("Built map in %d ms%s" % [Time.get_ticks_msec() - t0,
 			" (terrain %dx%d, base %.0f m)" % [terrain.cols, terrain.rows, terrain.base_elevation] if terrain else ""])
 		t0 = Time.get_ticks_msec()
+		# Keep the spawn clear of parked cars and trees.
+		builder.occupancy.mark_disc(builder.spawn_position.x, builder.spawn_position.z, 9.0, builder.Occupancy.PROP)
 		var props := PropsBuilder.new()
 		add_child(props.build(builder, ground_height, hash(path)))
 		print("Props in %d ms: %s" % [Time.get_ticks_msec() - t0, props.stats])

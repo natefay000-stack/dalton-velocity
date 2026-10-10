@@ -477,6 +477,11 @@ func test_gameplay() -> void:
 	var car: VehicleBody3D = main.car
 	var player: CharacterBody3D = main.player
 	check(player.is_on_floor(), "player standing on ground (y=%.2f)" % player.global_position.y)
+	var near_car := INF
+	for sb in main.get_node("Props/Collision").get_children():
+		if sb.shape is BoxShape3D:  # parked cars are the only boxes
+			near_car = minf(near_car, Vector2(sb.global_position.x - player.global_position.x, sb.global_position.z - player.global_position.z).length())
+	check(near_car > 6.0, "no parked car at the spawn (nearest %.1f m)" % near_car)
 	check(car.global_position.y > -0.2 and car.global_position.y < 1.0, "car settled on suspension (y=%.2f)" % car.global_position.y)
 	check(car.global_basis.y.dot(Vector3.UP) > 0.98, "car upright")
 
