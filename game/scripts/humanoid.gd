@@ -69,6 +69,8 @@ var _feet: Dictionary = {}
 var _was_airborne := false
 var _air_time := 0.0
 var _idle := true
+## Physics bodies the foot probes must ignore (the character's own).
+var probe_exclude: Array[RID] = []
 var _time := 0.0
 var _hips_y := HIP_HEIGHT
 var _mats: Dictionary = {}
@@ -344,9 +346,11 @@ func _probe(at: Vector3) -> Array:
 		if space != null:
 			var q := PhysicsRayQueryParameters3D.create(
 				Vector3(at.x, ref_y + PROBE_UP, at.z), Vector3(at.x, ref_y - PROBE_DOWN, at.z))
+			var excl := probe_exclude.duplicate()
 			var body := get_parent() as CollisionObject3D
 			if body != null:
-				q.exclude = [body.get_rid()]
+				excl.append(body.get_rid())
+			q.exclude = excl
 			var hit := space.intersect_ray(q)
 			if not hit.is_empty() and (hit["normal"] as Vector3).y > 0.5:
 				return [hit["position"], hit["normal"]]

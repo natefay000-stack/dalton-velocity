@@ -65,6 +65,18 @@ func _spawn(edge: int, dist: float, dir: int, seed: int) -> void:
 	h.look_seed = seed * 7919 + 13
 	h.build()
 	h.scale = Vector3.ONE * _rng.randf_range(0.92, 1.06)
+	# A kinematic capsule so the player and cars can't pass through them.
+	var body := AnimatableBody3D.new()
+	body.sync_to_physics = true
+	var shape := CapsuleShape3D.new()
+	shape.radius = 0.28
+	shape.height = 1.75
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	cs.position.y = 0.9
+	body.add_child(cs)
+	h.add_child(body)
+	h.probe_exclude.append(body.get_rid())
 	add_child(h)
 	var w := {"node": h, "edge": edge, "dist": dist, "dir": dir,
 		"speed": _rng.randf_range(1.15, 1.7), "prev_edge": -1}

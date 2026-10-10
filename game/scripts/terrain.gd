@@ -8,6 +8,7 @@ extends RefCounted
 ## carving) and builds the visible mesh plus HeightMapShape3D collision.
 
 const OsmData := preload("res://scripts/osm_data.gd")
+const Surfaces := preload("res://scripts/surfaces.gd")
 
 var cols := 0
 var rows := 0
@@ -177,10 +178,7 @@ func build_node() -> StaticBody3D:
 	arrays[Mesh.ARRAY_INDEX] = idx
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 1.0
-	mesh.surface_set_material(0, mat)
+	mesh.surface_set_material(0, Surfaces.material("ground"))
 	var mi := MeshInstance3D.new()
 	mi.name = "Mesh"
 	mi.mesh = mesh

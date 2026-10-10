@@ -17,6 +17,7 @@ const CameraRig := preload("res://scripts/camera_rig.gd")
 const Terrain := preload("res://scripts/terrain.gd")
 const PropsBuilder := preload("res://scripts/props_builder.gd")
 const Pedestrians := preload("res://scripts/pedestrians.gd")
+const Traffic := preload("res://scripts/traffic.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
 const ENTER_DISTANCE := 4.0
@@ -32,6 +33,9 @@ var map_bounds := Rect2()
 var terrain: Terrain = null
 var spawn_point := Vector3.ZERO
 var pedestrians: Node3D = null
+var traffic: Node3D = null
+## AI cars on the roads (0 to disable).
+@export var traffic_count := 24
 ## Walkers on the footpaths (0 to disable).
 @export var pedestrian_count := 40
 @export var player_look_seed := 1
@@ -67,6 +71,11 @@ func _ready() -> void:
 			pedestrians.name = "Pedestrians"
 			pedestrians.setup(builder.road_list, ground_height, pedestrian_count, hash(path))
 			add_child(pedestrians)
+		if traffic_count > 0:
+			traffic = Traffic.new()
+			traffic.name = "Traffic"
+			traffic.setup(builder.road_list, ground_height, traffic_count, hash(path) + 1)
+			add_child(traffic)
 		map_bounds = data.bounds
 		print("Loaded %s: %d roads, %d buildings, %d areas (%d skipped)" % [
 			path, builder.stats["roads"], builder.stats["buildings"],
@@ -242,6 +251,8 @@ func _process(_delta: float) -> void:
 	var p := car.global_position if in_car else player.global_position
 	if pedestrians != null:
 		pedestrians.set_focus(p)
+	if traffic != null:
+		traffic.set_focus(p)
 	var lines := PackedStringArray()
 	if in_car:
 		lines.append("%d km/h" % roundi(absf(car.forward_speed()) * 3.6))

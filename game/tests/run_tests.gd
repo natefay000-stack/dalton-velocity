@@ -11,6 +11,7 @@ const Terrain := preload("res://scripts/terrain.gd")
 const Occupancy := preload("res://scripts/occupancy.gd")
 const PropsBuilder := preload("res://scripts/props_builder.gd")
 const Pedestrians := preload("res://scripts/pedestrians.gd")
+const Traffic := preload("res://scripts/traffic.gd")
 
 var failures := 0
 
@@ -462,7 +463,41 @@ func test_props() -> void:
 	check(peds.walkers.size() == 12, "12 pedestrians spawned")
 	check(off_path == 0, "pedestrians stay on footways after 10 s (%d off)" % off_path)
 	check(moved == 12, "pedestrians keep walking (%d moved)" % moved)
+	var bodies := 0
+	for w in peds.walkers:
+		for ch in w["node"].get_children():
+			if ch is AnimatableBody3D:
+				bodies += 1
+	check(bodies == 12, "pedestrians have collision bodies (%d)" % bodies)
 	peds.queue_free()
+
+	# Traffic keeps to the roads, obeys limits and keeps moving.
+	var tr := Traffic.new()
+	tr.setup(b.road_list, func(_x, _z): return 0.0, 10, 9)
+	root.add_child(tr)
+	var car_starts := []
+	for c in tr.cars:
+		car_starts.append(c["node"].global_position)
+	var off_road := 0
+	var speeding := 0
+	for i in 900:
+		await physics_frame
+		if i % 30 == 0:
+			for c in tr.cars:
+				var p: Vector3 = c["node"].global_position
+				if not (b.occupancy.get_at(p.x, p.z) & Occupancy.ROAD):
+					off_road += 1
+				if c["speed"] > tr._edges[c["edge"]]["limit"] + 0.01:
+					speeding += 1
+	var driving := 0
+	for k in tr.cars.size():
+		if tr.cars[k]["node"].global_position.distance_to(car_starts[k]) > 10.0:
+			driving += 1
+	check(tr.cars.size() == 10, "10 AI cars spawned")
+	check(off_road == 0, "AI cars stay on roads over 15 s (%d samples off)" % off_road)
+	check(speeding == 0, "AI cars respect speed limits (%d samples over)" % speeding)
+	check(driving == 10, "AI cars keep driving (%d moved >10 m)" % driving)
+	tr.queue_free()
 	node.queue_free()
 	map.queue_free()
 	await process_frame

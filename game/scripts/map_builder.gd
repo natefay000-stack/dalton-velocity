@@ -8,6 +8,7 @@ extends RefCounted
 const OsmData := preload("res://scripts/osm_data.gd")
 const Terrain := preload("res://scripts/terrain.gd")
 const Occupancy := preload("res://scripts/occupancy.gd")
+const Surfaces := preload("res://scripts/surfaces.gd")
 
 const ROAD_WIDTHS := {
 	"motorway": 14.0, "trunk": 12.0, "primary": 10.0, "secondary": 9.0,
@@ -213,10 +214,10 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 		stats["driveways"] = stats.get("driveways", 0) + 1
 
 	root.add_child(_terrain.build_node() if _terrain != null else make_ground(data.bounds))
-	_attach(root, "Areas", areas, false)
-	_attach(root, "Roads", roads, false)
+	_attach(root, "Areas", areas, false, "ground")
+	_attach(root, "Roads", roads, false, "asphalt")
 	_attach_water(root, water)
-	_attach(root, "Buildings", buildings, true)
+	_attach(root, "Buildings", buildings, true, "stucco")
 	return root
 
 
@@ -830,16 +831,13 @@ func make_ground(bounds: Rect2) -> StaticBody3D:
 	return body
 
 
-func _attach(root: Node3D, name: String, st: SurfaceTool, collide: bool) -> void:
+func _attach(root: Node3D, name: String, st: SurfaceTool, collide: bool, surface: String = "") -> void:
 	var arrays := st.commit_to_arrays()
 	if arrays[Mesh.ARRAY_VERTEX] == null or arrays[Mesh.ARRAY_VERTEX].is_empty():
 		return
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 0.9
-	mesh.surface_set_material(0, mat)
+	mesh.surface_set_material(0, Surfaces.material(surface))
 
 	var mi := MeshInstance3D.new()
 	mi.name = name
