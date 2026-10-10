@@ -18,6 +18,7 @@ const Terrain := preload("res://scripts/terrain.gd")
 const PropsBuilder := preload("res://scripts/props_builder.gd")
 const Pedestrians := preload("res://scripts/pedestrians.gd")
 const Traffic := preload("res://scripts/traffic.gd")
+const Daylight := preload("res://scripts/daylight.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
 const ENTER_DISTANCE := 4.0
@@ -34,6 +35,9 @@ var terrain: Terrain = null
 var spawn_point := Vector3.ZERO
 var pedestrians: Node3D = null
 var traffic: Node3D = null
+var daylight: Node = null
+## Clock at start, hours (0-24). [ and ] shift it by an hour in play.
+@export var start_hour := 10.0
 ## AI cars on the roads (0 to disable).
 @export var traffic_count := 24
 ## Walkers on the footpaths (0 to disable).
@@ -66,6 +70,12 @@ func _ready() -> void:
 		var props := PropsBuilder.new()
 		add_child(props.build(builder, ground_height, hash(path)))
 		print("Props in %d ms: %s" % [Time.get_ticks_msec() - t0, props.stats])
+		var heads := PackedVector3Array()
+		for xf in props.instances.get("light", []):
+			heads.append((xf as Transform3D) * Vector3(0, 6.6, -1.7))
+		daylight.set_lamp_positions(heads)
+		daylight.add_night_material(props.lamp_material)
+		daylight.add_night_material(builder.window_material)
 		if pedestrian_count > 0:
 			pedestrians = Pedestrians.new()
 			pedestrians.name = "Pedestrians"
@@ -145,6 +155,8 @@ func _setup_input() -> void:
 		"interact": [KEY_E, KEY_F],
 		"reset_vehicle": [KEY_R],
 		"toggle_mouse": [KEY_ESCAPE],
+		"time_back": [KEY_BRACKETLEFT],
+		"time_forward": [KEY_BRACKETRIGHT],
 	}
 	for action in bindings:
 		if not InputMap.has_action(action):
@@ -156,32 +168,14 @@ func _setup_input() -> void:
 
 
 func _setup_environment() -> void:
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50, 35, 0)
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 250.0
-	add_child(sun)
-
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.35, 0.55, 0.85)
-	sky_mat.sky_horizon_color = Color(0.75, 0.82, 0.9)
-	# Below-horizon colours: haze over dry ground rather than the default
-	# dark brown, in case the view reaches past the terrain skirt.
-	sky_mat.ground_horizon_color = Color(0.75, 0.82, 0.9)
-	sky_mat.ground_bottom_color = Color(0.55, 0.52, 0.42)
-	var sky := Sky.new()
-	sky.sky_material = sky_mat
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.fog_enabled = true
-	env.fog_light_color = Color(0.75, 0.82, 0.9)
-	env.fog_density = 0.00035
-	var we := WorldEnvironment.new()
-	we.environment = env
-	add_child(we)
+	daylight = Daylight.new()
+	daylight.name = "Daylight"
+	daylight.hour = start_hour
+	add_child(daylight)
+	daylight.setup(self)
+	daylight.night_changed.connect(func(night: bool) -> void:
+		if car != null:
+			car.set_headlights(night))
 
 
 func _build_hud() -> void:
@@ -217,6 +211,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			exit_car()
 		elif player.global_position.distance_to(car.global_position) < ENTER_DISTANCE:
 			enter_car()
+	elif event.is_action_pressed("time_forward"):
+		daylight.hour = fmod(daylight.hour + 1.0, 24.0)
+	elif event.is_action_pressed("time_back"):
+		daylight.hour = fmod(daylight.hour + 23.0, 24.0)
 	elif event.is_action_pressed("reset_vehicle") and in_car:
 		car.reset_upright(car.global_position)
 
@@ -261,5 +259,6 @@ func _process(_delta: float) -> void:
 		lines.append("WASD move  Shift sprint  Ctrl walk  Space jump  Mouse look  Esc release mouse")
 		if p.distance_to(car.global_position) < ENTER_DISTANCE:
 			lines.append("Press E to drive")
-	lines.append("pos %.0f, %.0f" % [p.x, p.z])
+	lines.append("%s   pos %.0f, %.0f" % [daylight.clock_text(), p.x, p.z])
+	daylight.set_focus(p)
 	hud.text = "\n".join(lines)

@@ -12,6 +12,7 @@ const Occupancy := preload("res://scripts/occupancy.gd")
 const PropsBuilder := preload("res://scripts/props_builder.gd")
 const Pedestrians := preload("res://scripts/pedestrians.gd")
 const Traffic := preload("res://scripts/traffic.gd")
+const Daylight := preload("res://scripts/daylight.gd")
 
 var failures := 0
 
@@ -40,6 +41,8 @@ func _run() -> void:
 	await test_terrain()
 	print("props")
 	await test_props()
+	print("daylight")
+	test_daylight()
 	print("physics")
 	await test_gameplay()
 	print("%s (%d failure%s)" % ["PASSED" if failures == 0 else "FAILED", failures, "" if failures == 1 else "s"])
@@ -510,6 +513,41 @@ func test_props() -> void:
 	node.queue_free()
 	map.queue_free()
 	await process_frame
+
+
+func test_daylight() -> void:
+	var holder := Node3D.new()
+	root.add_child(holder)
+	var d := Daylight.new()
+	holder.add_child(d)
+	d.hour = 12.0
+	d.setup(holder)
+	check(d.daylight() > 0.9 and d.sun.light_energy > 1.0 and not d.is_night, "noon: sun up, not night")
+	var m := StandardMaterial3D.new()
+	m.emission_enabled = true
+	d.add_night_material(m)
+	var lamps := PackedVector3Array()
+	for i in 60:
+		lamps.append(Vector3(i * 10.0, 7.0, 0.0))
+	d.set_lamp_positions(lamps)
+	d.set_focus(Vector3(300, 0, 0))
+	d.hour = 22.0
+	d.apply()
+	d._place_lamps()
+	check(d.is_night and d.sun.light_energy < 0.05 and m.emission_energy_multiplier > 1.0, "22:00: night, sun off, windows lit")
+	var lit := 0
+	var far := 0
+	for l in d._lamps:
+		if l.visible:
+			lit += 1
+			if l.global_position.distance_to(Vector3(300, 7, 0)) > 400.0:
+				far += 1
+	check(lit == d.lamp_pool_size and far == 0, "night: %d nearest lamps lit, none far away" % lit)
+	d.hour = 6.5
+	d.apply()
+	check(d.sun.light_color.b < 0.6 and d.sun.light_energy > 0.0, "dawn: warm low sun")
+	check(d.clock_text() == "06:30", "clock text %s" % d.clock_text())
+	holder.free()
 
 
 func test_gameplay() -> void:

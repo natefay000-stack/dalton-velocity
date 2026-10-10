@@ -77,6 +77,9 @@ versioned.
   walk from each front door to the driveway, and vinyl backyard fences
   around most houses.
 - **A visible driver** (your character) when you're in the car.
+- **Day and night**: a 24-minute day (`start_hour` on Main; `[`/`]` shift it).
+  Low golden sun at dawn and dusk; at night the street lamps, house windows
+  and your headlights come on. Real lights sit on the 24 lamps nearest you.
 
 Placement is seeded from the map file name, so a given map always looks the
 same.
@@ -98,7 +101,8 @@ Mixamo exports (both cm/+Z and m/−Z conventions).
 | On foot | In car |
 |---|---|
 | WASD / arrows — move (camera-relative) | W / S — throttle, brake, reverse |
-| Shift — sprint, Ctrl — walk, Space — jump | A / D — steer, Space — handbrake |
+| Shift — sprint, Ctrl — walk, Space — jump |
+| [ / ] — time of day back / forward an hour | | A / D — steer, Space — handbrake |
 | Mouse — look | R — flip upright |
 | E / F near the car — get in | E / F — get out (below ~20 km/h) |
 
@@ -122,7 +126,8 @@ scripts/occupancy.gd       1 m grid of what's where (roads, houses, water, props
 scripts/props_builder.gd   trees, scrub, parked cars, street lights (MultiMesh)
 scripts/pedestrians.gd     walkers on the footpath graph
 scripts/traffic.gd         AI cars on the road graph (kinematic bodies)
-scripts/surfaces.gd        procedural triplanar materials with normal maps
+scripts/surfaces.gd        procedural materials: grain, brick, shingle, road wear
+scripts/daylight.gd        sun/sky/fog by time of day, night lights
 scripts/camera_rig.gd      orbit camera with spring arm
 tools/fetch_osm.py         Overpass downloader
 tests/run_tests.gd         headless engine tests (parser, geometry, physics)

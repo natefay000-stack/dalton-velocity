@@ -29,6 +29,8 @@ const FENCE_DEPTH := 11.0  # how far behind the back wall
 const FENCE_SIDE := 2.5   # how far beyond the side walls
 const LIGHT_SPACING := {"tertiary": 45.0, "secondary": 40.0, "primary": 40.0, "residential": 70.0, "unclassified": 60.0}
 
+## Lamp-head material; the day/night cycle drives its emission.
+var lamp_material: StandardMaterial3D
 var stats := {"trees": 0, "scrub": 0, "parked": 0, "lights": 0, "mailboxes": 0, "stop_signs": 0, "fence_panels": 0}
 var _rng := RandomNumberGenerator.new()
 var _ground: Callable
@@ -531,8 +533,9 @@ func _light_mesh() -> ArrayMesh:
 	lamp.albedo_color = Color(0.9, 0.9, 0.85)
 	lamp.emission_enabled = true
 	lamp.emission = Color(1.0, 0.95, 0.8)
-	lamp.emission_energy_multiplier = 0.6
+	lamp.emission_energy_multiplier = 0.0
 	mesh.surface_set_material(1, lamp)
+	lamp_material = lamp
 	return mesh
 
 

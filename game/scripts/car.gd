@@ -24,6 +24,12 @@ const Humanoid := preload("res://scripts/humanoid.gd")
 
 var driving := false
 var driver: Node3D = null
+var _headlights: Array[SpotLight3D] = []
+
+
+func set_headlights(on: bool) -> void:
+	for l in _headlights:
+		l.visible = on
 ## Seat position for a driver model (feet on the floor), local space.
 var driver_seat := Vector3(-0.38, 0.0, -0.2)
 
@@ -57,6 +63,19 @@ func _ready() -> void:
 	driver.position = driver_seat + Vector3(0, -0.14, 0.35)
 	driver.visible = false
 	add_child(driver)
+
+	for sx in [-1.0, 1.0]:
+		var l := SpotLight3D.new()
+		l.position = Vector3(sx * (d["width"] * 0.5 - 0.3), d["floor"] + 0.45, -d["length"] * 0.5 + 0.05)
+		l.rotation_degrees = Vector3(-8.0, 0.0, 0.0)  # points along -Z, dipped
+		l.spot_range = 45.0
+		l.spot_angle = 32.0
+		l.light_energy = 6.0
+		l.light_color = Color(1.0, 0.97, 0.9)
+		l.shadow_enabled = false
+		l.visible = false
+		add_child(l)
+		_headlights.append(l)
 
 	var wheel_mesh := CarMesh.build_wheel(style)
 	var positions := CarMesh.wheel_positions(style)

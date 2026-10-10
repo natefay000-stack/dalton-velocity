@@ -109,6 +109,9 @@ var _paving: SurfaceTool
 var _bricks: SurfaceTool
 var _roofs: SurfaceTool
 var _trim: SurfaceTool
+var _windows: SurfaceTool
+## Window-pane material; emission is switched on at night by Daylight.
+var window_material: StandardMaterial3D
 const BRICK_PALETTE := [Color(0.62, 0.32, 0.24), Color(0.70, 0.45, 0.34), Color(0.55, 0.30, 0.25), Color(0.75, 0.62, 0.50)]
 
 
@@ -126,6 +129,7 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 	_bricks = _st()
 	_roofs = _st()
 	_trim = _st()
+	_windows = _st()
 
 	# Pass 1: areas (and, with terrain, building yards) shape and paint the
 	# ground before anything is draped onto it.
@@ -242,7 +246,14 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 	_attach(root, "Roads", roads, false, "road")
 	_attach(root, "Paving", _paving, false, "concrete")
 	_attach_water(root, water)
-	_attach_multi(root, "Buildings", [[buildings, "stucco", true], [_bricks, "brick", true], [_roofs, "shingle", true], [_trim, "", false]])
+	window_material = StandardMaterial3D.new()
+	window_material.vertex_color_use_as_albedo = true
+	window_material.roughness = 0.2
+	window_material.metallic = 0.3
+	window_material.emission_enabled = true
+	window_material.emission = Color(1.0, 0.80, 0.55)
+	window_material.emission_energy_multiplier = 0.0
+	_attach_multi(root, "Buildings", [[buildings, "stucco", true], [_bricks, "brick", true], [_roofs, "shingle", true], [_trim, "", false], [_windows, window_material, false]])
 	return root
 
 
@@ -840,7 +851,10 @@ func _add_facade(st: SurfaceTool, a: Vector2, b: Vector2, out2: Vector2, ground:
 		_quad_wall(st, Vector3(p0.x, y0, p0.y), Vector3(p1.x, y0, p1.y), Vector3(p1.x, y1, p1.y), Vector3(p0.x, y1, p0.y), n3, col)
 	var win := func(s: float, y_base: float) -> void:
 		place.call(s - 0.62, s + 0.62, y_base + 0.95, y_base + 2.25, COLOR_FRAME, 0.02)
-		place.call(s - 0.55, s + 0.55, y_base + 1.02, y_base + 2.18, COLOR_WINDOW, 0.035)
+		var p0 := a + dir * (s - 0.55) + out2 * 0.035
+		var p1 := a + dir * (s + 0.55) + out2 * 0.035
+		_quad_wall(_windows, Vector3(p0.x, y_base + 1.02, p0.y), Vector3(p1.x, y_base + 1.02, p1.y),
+			Vector3(p1.x, y_base + 2.18, p1.y), Vector3(p0.x, y_base + 2.18, p0.y), n3, COLOR_WINDOW)
 
 	for level in levels:
 		var y_base := ground + level * lh
@@ -941,7 +955,7 @@ func _attach_multi(root: Node3D, name: String, parts: Array, collide: bool = tru
 		if arrays[Mesh.ARRAY_VERTEX] == null or arrays[Mesh.ARRAY_VERTEX].is_empty():
 			continue
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		mesh.surface_set_material(mesh.get_surface_count() - 1, Surfaces.material(part[1]))
+		mesh.surface_set_material(mesh.get_surface_count() - 1, part[1] if part[1] is Material else Surfaces.material(part[1]))
 		if part[2]:
 			faces.append_array(arrays[Mesh.ARRAY_VERTEX])
 	if mesh.get_surface_count() == 0:
