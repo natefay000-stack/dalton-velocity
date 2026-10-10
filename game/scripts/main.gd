@@ -105,6 +105,8 @@ func _ready() -> void:
 			traffic.setup(builder.road_list, ground_height, traffic_count, hash(path) + 1)
 			add_child(traffic)
 			traffic.set_night(daylight.is_night)
+		if pedestrians != null:
+			pedestrians.set_threats([traffic] if traffic != null else [])
 		map_bounds = data.bounds
 		print("Loaded %s: %d roads, %d buildings, %d areas (%d skipped)" % [
 			path, builder.stats["roads"], builder.stats["buildings"],
@@ -136,6 +138,7 @@ func _ready() -> void:
 
 	rig.set_target(player, 4.5, 1.6, false)
 	rig.yaw = builder.spawn_yaw
+	_register_player_car()
 	_build_hud()
 	audio = GameAudio.new()
 	audio.name = "Audio"
@@ -256,6 +259,14 @@ func exit_car() -> void:
 	rig.set_target(player, 4.5, 1.6, false)
 
 
+func _register_player_car() -> void:
+	if pedestrians != null:
+		var threats: Array = [car]
+		if traffic != null:
+			threats.append(traffic)
+		pedestrians.set_threats(threats)
+
+
 func _process(delta: float) -> void:
 	# Safety net: anything that falls out of the world comes back to spawn.
 	if car.global_position.y < -50.0:
@@ -270,6 +281,10 @@ func _process(delta: float) -> void:
 		pedestrians.set_focus(p)
 	if traffic != null:
 		traffic.set_focus(p)
+		for d in traffic.take_honks():
+			audio.ai_honk(d)
+	if in_car and Input.is_action_just_pressed("horn") and pedestrians != null:
+		pedestrians.honk(car.global_position)
 	daylight.set_focus(p)
 	var state := {
 		"clock": daylight.clock_text(),

@@ -515,6 +515,35 @@ func test_props() -> void:
 			if ch is AnimatableBody3D:
 				bodies += 1
 	check(bodies == 12, "pedestrians have collision bodies (%d)" % bodies)
+	# A car bearing down on a walker makes them stop and step aside; a horn makes them look.
+	var victim: Dictionary = peds.walkers[0]
+	var vp: Vector3 = victim["node"].global_position
+	var vdir := Vector3(-sin(victim["node"].rotation.y), 0.0, -cos(victim["node"].rotation.y))
+	var threat := RigidBody3D.new()
+	threat.gravity_scale = 0.0
+	root.add_child(threat)
+	threat.global_position = vp + vdir * 10.0
+	threat.linear_velocity = -vdir * 8.0
+	peds.set_threats([threat])
+	peds.set_focus(vp)
+	var before := vp
+	for i in 30:
+		await physics_frame
+	var after: Vector3 = victim["node"].global_position
+	check(victim["react"] > 0.0, "walker reacts to an oncoming car")
+	var along := (after - before).dot(vdir)
+	var across := (after - before - vdir * along).length()
+	check(absf(along) < 0.8 and across > 0.3, "walker stops and steps aside (%.2f along, %.2f across)" % [along, across])
+	threat.queue_free()
+	peds.set_threats([])
+	for i in 420:
+		await physics_frame
+	check(victim["react"] <= 0.0 and victim["node"].global_position.distance_to(after) > 1.0, "walker carries on afterwards (react %.2f, moved %.2f)" % [victim["react"], victim["node"].global_position.distance_to(after)])
+	var listener: Dictionary = peds.walkers[1]
+	var lp: Vector3 = listener["node"].global_position
+	peds.honk(lp + Vector3(5.0, 0.0, 5.0))
+	await physics_frame
+	check(listener["react"] > 0.0, "a nearby horn stops a walker")
 	peds.queue_free()
 
 	# Traffic keeps to the roads, obeys limits and keeps moving.

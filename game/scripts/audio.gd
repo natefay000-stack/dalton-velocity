@@ -33,6 +33,7 @@ var _skid_lp := 0.0
 var _horn_phase1 := 0.0
 var _horn_phase2 := 0.0
 var _horn_env := 0.0
+var _ai_horns: Array = []  # [remaining samples, gain, phase1, phase2]
 
 
 func _ready() -> void:
@@ -54,6 +55,13 @@ func _process(_delta: float) -> void:
 	var n := _playback.get_frames_available()
 	if n > 0:
 		_playback.push_buffer(render(n))
+
+
+## A short horn from another car `distance` metres away.
+func ai_honk(distance: float) -> void:
+	var gain := clampf(1.0 - distance / 80.0, 0.0, 1.0) * 0.35
+	if gain > 0.01:
+		_ai_horns.append([int(RATE * _rng.randf_range(0.35, 0.7)), gain, 0.0, 0.0, _rng.randf_range(330.0, 380.0)])
 
 
 ## `n` frames of mixed audio for the current state; advances all voices.
@@ -158,7 +166,16 @@ func render(n: int) -> PackedVector2Array:
 			_horn_phase2 = fmod(_horn_phase2 + 500.0 * dt, 1.0)
 			var h := sin(_horn_phase1 * TAU) + sin(_horn_phase2 * TAU) + 0.4 * sin(_horn_phase1 * TAU * 3.0)
 			horn = clampf(h * 0.8, -1.0, 1.0) * 0.5 * _horn_env
-		var s := eng + wind + step + nature + skid + horn
+		var others := 0.0
+		for k in range(_ai_horns.size() - 1, -1, -1):
+			var hn: Array = _ai_horns[k]
+			hn[2] = fmod(hn[2] + hn[4] * dt, 1.0)
+			hn[3] = fmod(hn[3] + hn[4] * 1.25 * dt, 1.0)
+			others += clampf(sin(hn[2] * TAU) + sin(hn[3] * TAU), -1.0, 1.0) * hn[1]
+			hn[0] -= 1
+			if hn[0] <= 0:
+				_ai_horns.remove_at(k)
+		var s := eng + wind + step + nature + skid + horn + others
 		s = clampf(s, -1.0, 1.0)
 		out[i] = Vector2(s, s)
 	return out

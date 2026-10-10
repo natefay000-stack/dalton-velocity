@@ -32,6 +32,7 @@ var _meshes: Dictionary = {}
 var _night := false
 var _beams: Array[SpotLight3D] = []  # pool of 2 * HEADLIGHT_CARS spotlights
 var _beam_timer := 0.0
+var _honks: Array[float] = []  # distances (m) of AI horns since last take
 
 
 func setup(roads: Array[Dictionary], ground_fn: Callable, count: int, seed: int = 1) -> void:
@@ -167,6 +168,13 @@ func _assign_beams() -> void:
 			l.visible = node.visible
 
 
+## Horn blasts from blocked AI cars since the last call, as distances.
+func take_honks() -> Array[float]:
+	var out := _honks.duplicate()
+	_honks.clear()
+	return out
+
+
 func _physics_process(delta: float) -> void:
 	for c in cars:
 		_drive(c, delta)
@@ -198,6 +206,10 @@ func _drive(c: Dictionary, delta: float) -> void:
 	# centre line and go around.
 	if c["speed"] < 0.3 and ray.is_colliding():
 		c["stuck"] += delta
+		if c["stuck"] > 1.4 and c["stuck"] - delta <= 1.4:
+			var d: float = c["node"].global_position.distance_to(_focus)
+			if d < 80.0:
+				_honks.append(d)
 		if c["stuck"] > 2.5 and not passing:
 			c["pass_until"] = c["dist"] + c["dir"] * 30.0
 			c["stuck"] = 0.0
