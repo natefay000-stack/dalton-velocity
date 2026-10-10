@@ -19,6 +19,7 @@ const PropsBuilder := preload("res://scripts/props_builder.gd")
 const Pedestrians := preload("res://scripts/pedestrians.gd")
 const Traffic := preload("res://scripts/traffic.gd")
 const Daylight := preload("res://scripts/daylight.gd")
+const Minimap := preload("res://scripts/minimap.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
 const ENTER_DISTANCE := 4.0
@@ -33,9 +34,11 @@ var in_car := false
 var map_bounds := Rect2()
 var terrain: Terrain = null
 var spawn_point := Vector3.ZERO
+var _builder: MapBuilder
 var pedestrians: Node3D = null
 var traffic: Node3D = null
 var daylight: Node = null
+var minimap: CanvasLayer = null
 ## Clock at start, hours (0-24). [ and ] shift it by an hour in play.
 @export var start_hour := 10.0
 ## AI cars on the roads (0 to disable).
@@ -52,6 +55,7 @@ func _ready() -> void:
 	var path := _resolve_map_path()
 	var data := OsmData.new()
 	var builder := MapBuilder.new()
+	_builder = builder
 	var err := data.parse_file(path) if path != "" else ERR_FILE_NOT_FOUND
 	if err == OK:
 		var height_path := path.get_basename() + ".height"
@@ -118,6 +122,11 @@ func _ready() -> void:
 	rig.set_target(player, 4.5, 1.6, false)
 	rig.yaw = builder.spawn_yaw
 	_build_hud()
+	if map_bounds.size.x > 0.0:
+		minimap = Minimap.new()
+		minimap.name = "Minimap"
+		add_child(minimap)
+		minimap.setup(_builder, map_bounds, player, traffic, pedestrians)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
@@ -154,6 +163,7 @@ func _setup_input() -> void:
 		"walk": [KEY_CTRL, KEY_ALT],
 		"interact": [KEY_E, KEY_F],
 		"reset_vehicle": [KEY_R],
+		"toggle_map": [KEY_M],
 		"toggle_mouse": [KEY_ESCAPE],
 		"time_back": [KEY_BRACKETLEFT],
 		"time_forward": [KEY_BRACKETRIGHT],
@@ -211,6 +221,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			exit_car()
 		elif player.global_position.distance_to(car.global_position) < ENTER_DISTANCE:
 			enter_car()
+	elif event.is_action_pressed("toggle_map") and minimap != null:
+		minimap.toggle_full()
 	elif event.is_action_pressed("time_forward"):
 		daylight.hour = fmod(daylight.hour + 1.0, 24.0)
 	elif event.is_action_pressed("time_back"):
@@ -256,7 +268,7 @@ func _process(_delta: float) -> void:
 		lines.append("%d km/h" % roundi(absf(car.forward_speed()) * 3.6))
 		lines.append("W/S throttle/brake  A/D steer  Space handbrake  R reset  E exit")
 	else:
-		lines.append("WASD move  Shift sprint  Ctrl walk  Space jump  Mouse look  Esc release mouse")
+		lines.append("WASD move  Shift sprint  Ctrl walk  Space jump  Mouse look  M map  Esc release mouse")
 		if p.distance_to(car.global_position) < ENTER_DISTANCE:
 			lines.append("Press E to drive")
 	lines.append("%s   pos %.0f, %.0f" % [daylight.clock_text(), p.x, p.z])

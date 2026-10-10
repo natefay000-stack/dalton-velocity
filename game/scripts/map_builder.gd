@@ -103,6 +103,8 @@ var road_list: Array[Dictionary] = []
 var building_list: Array[Dictionary] = []
 ## {ring, kind} for parks, grass, forest etc. (not water).
 var area_list: Array[Dictionary] = []
+## Outer rings of lakes and ponds (for the minimap).
+var water_rings: Array[PackedVector2Array] = []
 var _driveways: Array[PackedVector2Array] = []
 var _walks: Array = []  # [door point, outward dir]
 var _paving: SurfaceTool
@@ -170,6 +172,7 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 			stats["areas"] += 1
 			if item[2]:
 				occupancy.mark_polygon(_clean_ring(item[0]), 1.0, Occupancy.WATER)
+				water_rings.append(_clean_ring(item[0]))
 	if _terrain != null:
 		_paint_terrain_base(footprints)
 

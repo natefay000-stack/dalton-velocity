@@ -102,6 +102,7 @@ Mixamo exports (both cm/+Z and m/−Z conventions).
 |---|---|
 | WASD / arrows — move (camera-relative) | W / S — throttle, brake, reverse |
 | Shift — sprint, Ctrl — walk, Space — jump |
+| M — full map (minimap is always in the corner) | |
 | [ / ] — time of day back / forward an hour | | A / D — steer, Space — handbrake |
 | Mouse — look | R — flip upright |
 | E / F near the car — get in | E / F — get out (below ~20 km/h) |
@@ -128,6 +129,7 @@ scripts/pedestrians.gd     walkers on the footpath graph
 scripts/traffic.gd         AI cars on the road graph (kinematic bodies)
 scripts/surfaces.gd        procedural materials: grain, brick, shingle, road wear
 scripts/daylight.gd        sun/sky/fog by time of day, night lights
+scripts/minimap.gd         corner minimap + full map, nearest street name
 scripts/camera_rig.gd      orbit camera with spring arm
 tools/fetch_osm.py         Overpass downloader
 tests/run_tests.gd         headless engine tests (parser, geometry, physics)

@@ -591,6 +591,16 @@ func test_gameplay() -> void:
 	ev.action = "interact"
 	ev.pressed = true
 	main._unhandled_input(ev)
+	var mm = main.minimap
+	check(mm != null and mm.texture != null, "minimap built")
+	var street: String = mm.nearest_street(Vector2(30.0, -3.0))
+	check(street == "Main Street", "nearest street beside Main Street (got '%s')" % street)
+	check(mm.nearest_street(Vector2(-150.0, -150.0)) == "", "no street name far from roads")
+	var px: Vector2 = mm.to_px(Vector2(-280.0, -280.0))
+	check(px.length() < 0.1, "map pixel origin at the north-west corner (%s)" % px)
+	mm.toggle_full()
+	check(mm.full_open and mm._full.visible and not mm._mini.visible, "M opens the full map")
+	mm.toggle_full()
 	check(main.in_car, "entered car")
 	check(car.driver.visible and not player.visible, "driver shown in the car, player hidden")
 	var head_top := -INF
