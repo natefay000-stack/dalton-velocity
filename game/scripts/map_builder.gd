@@ -50,6 +50,7 @@ const EDGE_LINE_TYPES := ["motorway", "trunk", "primary", "secondary"]
 const LEVEL_HEIGHT_FACADE := 2.9
 const DRIVEWAY_WIDTH := 4.0
 const DRIVEWAY_MAX := 28.0
+const ROAD_BLEND := 6.0  # metres of slope between a road bed and natural ground
 const COLOR_GRASS := Color(0.36, 0.55, 0.28)
 const COLOR_WATER := Color(0.22, 0.42, 0.62)
 const COLOR_PAVED := Color(0.55, 0.55, 0.55)
@@ -64,7 +65,7 @@ const ROOF_PALETTE := [
 	Color(0.30, 0.24, 0.20), Color(0.22, 0.23, 0.26),
 ]
 const HIP_PITCH := 0.45  # rise/run, ~24 degrees
-const HIP_MIN_FILL := 0.82  # footprint area / bounding-box area
+const HIP_MIN_FILL := 0.6  # footprint area / bounding-box area (L-shapes get boxed)
 const ROOF_OVERHANG := 0.4
 const WATER_DEPTH := 2.5  # metres below the surface away from the shore
 const WATER_SHELF := 10.0  # metres from the shore to full depth
@@ -178,6 +179,29 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 
 	# Pass 2: roads (with curbs and markings) on the final ground. They go
 	# before buildings so facades can tell which side faces the street.
+	# With terrain, the ground is first cut and filled flat under every
+	# drivable road (heights sampled along the centreline before any carving,
+	# so crossing roads agree).
+	if _terrain != null:
+		var beds: Array = []
+		for way in data.ways:
+			var tags: Dictionary = way["tags"]
+			if not (tags.has("highway") and tags["highway"] in DRIVABLE_TYPES + ["service"] and tags.get("area") != "yes"):
+				continue
+			var pts := _subdivide(data.way_points(way), DRAPE_STEP) if data.way_points(way).size() >= 2 else PackedVector2Array()
+			if pts.size() < 2:
+				continue
+			var hs := PackedFloat32Array()
+			for p in pts:
+				hs.append(_terrain.height_at(p.x, p.y))
+			# Smooth along the road so it doesn't follow every 4 m bump.
+			var sm := hs.duplicate()
+			for i in range(1, hs.size() - 1):
+				sm[i] = (hs[i - 1] + hs[i] * 2.0 + hs[i + 1]) * 0.25
+			beds.append([pts, sm, _road_width(tags) * 0.5 + CURB_WIDTH + 0.5])
+		for bed in beds:
+			_terrain.flatten_polyline(bed[0], bed[1], bed[2], ROAD_BLEND)
+		stats["road_beds"] = beds.size()
 	var best_spawn_score := -INF
 	var center := data.bounds.get_center()
 	for way in data.ways:
@@ -714,7 +738,10 @@ func _hip_rect(ring: PackedVector2Array, tags: Dictionary, height: float) -> Dic
 	var shape := String(tags.get("roof:shape", ""))
 	if shape != "" and shape != "hipped" and shape != "gabled":
 		return {}
-	if height > 12.0 or ring.size() > 16:
+	if height > 12.0:
+		return {}
+	ring = _simplify_ring(ring, 0.7)
+	if ring.size() > 24:
 		return {}
 	var area := 0.0
 	for i in ring.size():
@@ -722,7 +749,7 @@ func _hip_rect(ring: PackedVector2Array, tags: Dictionary, height: float) -> Dic
 		var b := ring[(i + 1) % ring.size()]
 		area += a.x * b.y - b.x * a.y
 	area = absf(area) * 0.5
-	if area < 25.0 or area > 600.0:
+	if area < 25.0 or area > 900.0:
 		return {}
 	# Minimum-area box over the footprint's own edge directions.
 	var best := {}
@@ -791,6 +818,48 @@ func _add_hip_roof(st: SurfaceTool, hip: Dictionary, eave: float, ridge: float, 
 	if not gable:
 		_tri_up(st, b2, a1, r1, color.darkened(0.07), uv_end.call(b2), uv_end.call(a1), uv_end.call(r1))
 		_tri_up(st, a2, b1, r2, color.darkened(0.07), uv_end.call(a2), uv_end.call(b1), uv_end.call(r2))
+
+
+## Douglas-Peucker on a closed ring: drops the jitter real footprints carry.
+func _simplify_ring(ring: PackedVector2Array, tol: float) -> PackedVector2Array:
+	if ring.size() <= 4:
+		return ring
+	# Split at the two points furthest apart so each half is an open line.
+	var far := 0
+	var best := -1.0
+	for i in ring.size():
+		var d := ring[0].distance_squared_to(ring[i])
+		if d > best:
+			best = d
+			far = i
+	var a := _dp(ring.slice(0, far + 1), tol)
+	var b_part := ring.slice(far)
+	b_part.append(ring[0])
+	var b := _dp(b_part, tol)
+	var out := PackedVector2Array()
+	out.append_array(a)
+	out.append_array(b.slice(1, b.size() - 1))
+	return out if out.size() >= 3 else ring
+
+
+func _dp(line: PackedVector2Array, tol: float) -> PackedVector2Array:
+	if line.size() < 3:
+		return line
+	var a := line[0]
+	var b := line[line.size() - 1]
+	var worst := 0.0
+	var idx := 0
+	for i in range(1, line.size() - 1):
+		var d := line[i].distance_to(Geometry2D.get_closest_point_to_segment(line[i], a, b))
+		if d > worst:
+			worst = d
+			idx = i
+	if worst <= tol:
+		return PackedVector2Array([a, b])
+	var left := _dp(line.slice(0, idx + 1), tol)
+	var right := _dp(line.slice(idx), tol)
+	left.append_array(right.slice(1))
+	return left
 
 
 ## Index of the wall edge that faces the nearest road (-1 if none within

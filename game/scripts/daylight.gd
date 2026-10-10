@@ -45,9 +45,10 @@ func setup(parent: Node3D) -> void:
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment.fog_enabled = true
 	environment.fog_density = 0.00035
-	environment.glow_enabled = true
-	environment.glow_intensity = 0.4
-	environment.glow_bloom = 0.1
+	environment.glow_enabled = false
+	environment.glow_intensity = 0.35
+	environment.glow_bloom = 0.05
+	environment.tonemap_exposure = 0.9
 	var we := WorldEnvironment.new()
 	we.environment = environment
 	parent.add_child(we)
@@ -109,7 +110,7 @@ func apply() -> void:
 	var warm := Color(1.0, 0.72, 0.45)
 	var noon := Color(1.0, 0.97, 0.92)
 	sun.light_color = warm.lerp(noon, warmth)
-	sun.light_energy = lerpf(0.0, 1.25, dusk)
+	sun.light_energy = lerpf(0.0, 1.0, dusk)
 	sun.visible = dusk > 0.01
 
 	var top_night := Color(0.02, 0.03, 0.07)
@@ -125,7 +126,7 @@ func apply() -> void:
 	sky.sun_angle_max = 30.0
 	sky.sun_curve = 0.15
 	environment.ambient_light_sky_contribution = 1.0
-	environment.ambient_light_energy = lerpf(0.12, 1.0, day)
+	environment.ambient_light_energy = lerpf(0.12, 0.55, day)
 	environment.fog_light_color = horizon.darkened(0.1 * (1.0 - day))
 
 	var night_now := day < 0.2
@@ -136,6 +137,7 @@ func apply() -> void:
 		for l in _lamps:
 			l.visible = is_night
 			l.light_energy = 2.6 if is_night else 0.0
+		environment.glow_enabled = is_night  # bloom only on lamps and windows
 		night_changed.emit(is_night)
 
 

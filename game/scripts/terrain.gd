@@ -140,6 +140,35 @@ func for_each_near(rect: Rect2, radius: float, fn: Callable) -> void:
 			fn.call(c, r)
 
 
+## Road bed: sets every vertex within `half_width` of the polyline to the
+## centreline's height there (sampled before any carving, via `center_h`
+## per point), so a road sits on a flat, cut-and-filled strip instead of
+## having the hillside poke through it. `blend` metres beyond that ease
+## back to the natural ground.
+func flatten_polyline(pts: PackedVector2Array, center_h: PackedFloat32Array, half_width: float, blend: float) -> void:
+	for i in pts.size() - 1:
+		var a := pts[i]
+		var b := pts[i + 1]
+		var seg_len := a.distance_to(b)
+		if seg_len < 1e-3:
+			continue
+		var rect := Rect2(a, Vector2.ZERO).expand(b)
+		for_each_near(rect, half_width + blend, func(c: int, r: int) -> void:
+			var p := Vector2(x0 + c * dx, z0 + r * dz)
+			var q := Geometry2D.get_closest_point_to_segment(p, a, b)
+			var d := p.distance_to(q)
+			if d > half_width + blend:
+				return
+			var t := a.distance_to(q) / seg_len
+			var target := lerpf(center_h[i], center_h[i + 1], t)
+			var idx := r * cols + c
+			if d <= half_width:
+				heights[idx] = target
+			else:
+				var k := (d - half_width) / blend  # 0 at the edge, 1 at natural
+				heights[idx] = lerpf(target, heights[idx], smoothstep(0.0, 1.0, k)))
+
+
 ## Visible mesh + HeightMapShape3D collision.
 func build_node() -> StaticBody3D:
 	var body := StaticBody3D.new()

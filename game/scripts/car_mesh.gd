@@ -168,12 +168,14 @@ static func build_body(style: String, paint: Color) -> ArrayMesh:
 	paint_mat.metallic = 0.45
 	paint_mat.roughness = 0.35
 	paint_mat.metallic_specular = 0.6
+	paint_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	mesh.surface_set_material(0, paint_mat)
 	mesh = trim.commit(mesh)
 	var trim_mat := StandardMaterial3D.new()
 	trim_mat.vertex_color_use_as_albedo = true
 	trim_mat.metallic = 0.2
 	trim_mat.roughness = 0.4
+	trim_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	mesh.surface_set_material(1, trim_mat)
 	mesh = glass_st.commit(mesh)
 	var glass_mat := StandardMaterial3D.new()
@@ -182,6 +184,7 @@ static func build_body(style: String, paint: Color) -> ArrayMesh:
 	glass_mat.metallic = 0.6
 	glass_mat.roughness = 0.08
 	glass_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	glass_mat.render_priority = 1
 	mesh.surface_set_material(2, glass_mat)
 	return mesh
 

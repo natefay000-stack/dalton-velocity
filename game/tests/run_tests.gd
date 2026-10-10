@@ -329,6 +329,21 @@ func test_terrain() -> void:
 		lo = minf(lo, gap)
 		hi = maxf(hi, gap)
 	check(lo > 0.03 and hi < 0.25, "roads hug the terrain (gap %.3f..%.3f m)" % [lo, hi])
+	# Road beds are flat across: left and right edges of a road at the
+	# same station sit at the same height even on the 12% cross-slope.
+	var worst_tilt := 0.0
+	for r in b.road_list:
+		if r["highway"] != "residential":
+			continue
+		var pts: PackedVector2Array = r["pts"]
+		for i in range(1, pts.size() - 1, 3):
+			var dir2 := (pts[i + 1] - pts[i - 1]).normalized()
+			var n: Vector2 = Vector2(-dir2.y, dir2.x) * (r["width"] * 0.5)
+			var left: Vector2 = pts[i] + n
+			var right: Vector2 = pts[i] - n
+			worst_tilt = maxf(worst_tilt, absf(t.height_at(left.x, left.y) - t.height_at(right.x, right.y)))
+	check(worst_tilt < 0.12, "road beds flat across the slope (worst edge difference %.2f m)" % worst_tilt)
+	check(b.stats.get("road_beds", 0) >= 40, "road beds cut (%d)" % b.stats.get("road_beds", 0))
 	var floating := 0
 	var bld: PackedVector3Array = (map.get_node("Buildings/Mesh") as MeshInstance3D).mesh.get_faces()
 	# Wall corners are the xz columns holding both a bottom and a top vertex
@@ -349,7 +364,7 @@ func test_terrain() -> void:
 			floating += 1
 	check(walls > 400, "found wall corners to check (%d)" % walls)
 	check(floating == 0, "no building corner floats above the slope (%d)" % floating)
-	check(b.stats.get("hip_roofs", 0) > 100, "houses get hipped roofs (%d)" % b.stats.get("hip_roofs", 0))
+	check(b.stats.get("hip_roofs", 0) >= 115, "houses incl. L-shapes get pitched roofs; only tall blocks stay flat (%d)" % b.stats.get("hip_roofs", 0))
 	check(absf(b.spawn_position.y - t.height_at(b.spawn_position.x, b.spawn_position.z)) < 0.01, "spawn on the ground")
 
 	# Walking uphill: planted feet sit on the slope, don't slide or sink.
@@ -522,7 +537,7 @@ func test_daylight() -> void:
 	holder.add_child(d)
 	d.hour = 12.0
 	d.setup(holder)
-	check(d.daylight() > 0.9 and d.sun.light_energy > 1.0 and not d.is_night, "noon: sun up, not night")
+	check(d.daylight() > 0.9 and d.sun.light_energy > 0.9 and not d.is_night, "noon: sun up, not night")
 	var m := StandardMaterial3D.new()
 	m.emission_enabled = true
 	d.add_night_material(m)
