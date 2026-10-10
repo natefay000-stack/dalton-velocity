@@ -51,6 +51,18 @@ pools in the photo (blue blobs away from buildings and lakes) and adds them
 to the .osm as `leisure=swimming_pool`; they are carved, filled with water
 and get a concrete deck. About 2 minutes for a few km².
 
+**Downtown Salt Lake City** (600 South & Main) as a second map, about
+6 km² and 2,600 buildings, reached from the pause menu's Travel buttons:
+
+```
+python3 game/tools/fetch_overture.py --bbox 40.748 -111.905 40.772 -111.878 -o game/maps/downtown.osm
+```
+
+Any other `.osm` dropped into `game/maps/` shows up there too. Downtown
+brings traffic lights at every major junction (AI traffic waits on red),
+one-way streets the AI respects, storefronts with awnings on commercial
+buildings and plain entrances on office and apartment blocks.
+
 **Then the lot lines** (Utah SGID parcels, public):
 
 ```bash

@@ -369,7 +369,7 @@ func _place_driveway_props(roads: Array[Dictionary]) -> void:
 ## A trampoline in the backyard of a quarter of the houses.
 func _place_trampolines(buildings: Array[Dictionary]) -> void:
 	for bl in buildings:
-		if bl["front"] < 0 or _rng.randf() > 0.25:
+		if bl["front"] < 0 or bl.get("kind", "house") != "house" or _rng.randf() > 0.25:
 			continue
 		var out: Vector2 = bl["front_dir"]
 		if out == Vector2.ZERO:

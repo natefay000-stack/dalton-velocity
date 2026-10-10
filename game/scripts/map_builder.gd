@@ -119,6 +119,12 @@ var parcel_list: Array[PackedVector2Array] = []
 var signal_junctions: Dictionary = {}
 const SIGNAL_RANK := {"primary": 3, "secondary": 2, "tertiary": 1}
 var _driveways: Array[PackedVector2Array] = []
+## "house" (garage, porch), "shop" (storefront) or "block" (plain entrance),
+## for the building whose walls are being built.
+var _facade_kind := "house"
+const HOUSE_KINDS := ["house", "residential", "detached", "semidetached_house", "terrace", "bungalow", "cabin"]
+const SHOP_KINDS := ["commercial", "retail", "shop", "supermarket", "mall", "kiosk"]
+const AWNING_COLORS := [Color(0.55, 0.12, 0.12), Color(0.12, 0.25, 0.45), Color(0.15, 0.35, 0.2), Color(0.2, 0.2, 0.22), Color(0.6, 0.45, 0.15)]
 var _walks: Array = []  # [door point, outward dir]
 ## Front doors as [point (Vector2), outward dir (Vector2)], for props.
 var door_list: Array = []
@@ -688,6 +694,14 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 	var y1: float = hs[1] + (g_mean if _terrain != null else 0.0)
 	var color: Color = BUILDING_PALETTE[absi(hash(id)) % BUILDING_PALETTE.size()]
 	var base := g_mean if _terrain != null else 0.0
+	var kind := String(tags.get("building", "yes"))
+	var footprint := absf(_signed_area(ring))
+	if kind in SHOP_KINDS:
+		_facade_kind = "shop"
+	elif kind in HOUSE_KINDS or (kind == "yes" and hs[1] < 9.0 and footprint < 400.0):
+		_facade_kind = "house"
+	else:
+		_facade_kind = "block"
 	# On a sloped lot the eaves still clear the uphill side by a full storey,
 	# so the uphill wall keeps room for its door and garage.
 	var eave_min: float = (g_max if _terrain != null else 0.0) + 2.7
@@ -714,7 +728,7 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 
 	occupancy.mark_polygon(ring, 1.0, Occupancy.BUILDING)
 	var front := _front_edge(ring)
-	building_list.append({"ring": ring, "rect": _rect_of(ring), "front": front, "height": y1 - base, "front_dir": Vector2.ZERO})
+	building_list.append({"ring": ring, "rect": _rect_of(ring), "front": front, "height": y1 - base, "front_dir": Vector2.ZERO, "kind": _facade_kind})
 
 	# Walls: outward normal depends on ring orientation. Note the ring lives
 	# in (x, z) with +z pointing south, so it is mirrored relative to the
@@ -984,6 +998,18 @@ func _add_facade(st: SurfaceTool, a: Vector2, b: Vector2, out2: Vector2, ground:
 		var y_base := ground + level * lh
 		var cursor := 0.7
 		var end := length - 0.7
+		if level == 0 and is_front and _facade_kind == "shop":
+			_storefront(place, win, a, dir, out2, y_base, length, lh)
+			continue
+		if level == 0 and is_front and _facade_kind == "block":
+			# Plain entrance in the middle: double door, windows either side.
+			var mid := length * 0.5
+			place.call(mid - 0.9, mid + 0.9, y_base + 0.05, y_base + 2.3, COLOR_DOOR.lightened(0.1), 0.03)
+			place.call(mid - 1.0, mid + 1.0, y_base + 2.3, y_base + 2.45, COLOR_FRAME, 0.05)
+			_walks.append([a + dir * mid + out2 * 0.05, out2])
+			_fill_windows(win, cursor, mid - 1.6, y_base)
+			_fill_windows(win, mid + 1.6, end, y_base)
+			continue
 		if level == 0 and is_front:
 			# Garage (2 bays) where the photo shows the driveway's concrete,
 			# else at one end; front door beside it; windows in the gaps.
@@ -1030,6 +1056,56 @@ func _add_facade(st: SurfaceTool, a: Vector2, b: Vector2, out2: Vector2, ground:
 			continue
 		_fill_windows(win, cursor, end, y_base)
 	return garage_at
+
+
+## Ground floor of a shop: glass bays between piers, a door in the middle
+## bay, a sign band above and a coloured awning over the glass.
+func _storefront(place: Callable, _win: Callable, a: Vector2, dir: Vector2, out2: Vector2, y_base: float, length: float, lh: float) -> void:
+	var bays := maxi(1, int((length - 0.6) / 3.2))
+	var bay_w := (length - 0.6) / bays
+	var door_bay := bays / 2
+	var glass_top := y_base + minf(2.7, lh - 0.6)
+	var n3 := Vector3(out2.x, 0.0, out2.y)
+	for k in bays:
+		var s0 := 0.3 + k * bay_w + 0.15
+		var s1 := s0 + bay_w - 0.3
+		place.call(s0 - 0.08, s1 + 0.08, y_base + 0.45, glass_top + 0.08, COLOR_FRAME, 0.02)
+		if k == door_bay:
+			var mid := (s0 + s1) * 0.5
+			place.call(mid - 0.9, mid + 0.9, y_base + 0.05, glass_top, COLOR_DOOR.lightened(0.15), 0.035)
+			place.call(mid - 0.03, mid + 0.03, y_base + 0.05, glass_top, COLOR_FRAME, 0.04)
+			_walks.append([a + dir * mid + out2 * 0.05, out2])
+			if mid - 0.9 - s0 > 0.6:
+				_glass(a, dir, out2, s0, mid - 0.95, y_base + 0.5, glass_top, n3)
+			if s1 - (mid + 0.9) > 0.6:
+				_glass(a, dir, out2, mid + 0.95, s1, y_base + 0.5, glass_top, n3)
+		else:
+			_glass(a, dir, out2, s0, s1, y_base + 0.5, glass_top, n3)
+	# Sign band and awning.
+	var band0 := glass_top + 0.15
+	var band1 := minf(band0 + 0.55, y_base + lh - 0.05)
+	if band1 > band0 + 0.2:
+		place.call(0.3, length - 0.3, band0, band1, Color(0.16, 0.15, 0.14), 0.05)
+	var awning: Color = AWNING_COLORS[absi(hash(int(a.x * 7.0 + a.y * 13.0))) % AWNING_COLORS.size()]
+	var p0 := a + dir * 0.3
+	var p1 := a + dir * (length - 0.3)
+	var inner_y := glass_top + 0.12
+	var outer_y := glass_top - 0.25
+	var q0 := p0 + out2 * 1.1
+	var q1 := p1 + out2 * 1.1
+	_tri(_trim, Vector3(p0.x, inner_y, p0.y), Vector3(p1.x, inner_y, p1.y), Vector3(q1.x, outer_y, q1.y), Vector3(n3.x * 0.3, 1.0, n3.z * 0.3).normalized(), awning)
+	_tri(_trim, Vector3(p0.x, inner_y, p0.y), Vector3(q1.x, outer_y, q1.y), Vector3(q0.x, outer_y, q0.y), Vector3(n3.x * 0.3, 1.0, n3.z * 0.3).normalized(), awning)
+	_tri(_trim, Vector3(p0.x, inner_y, p0.y), Vector3(q1.x, outer_y, q1.y), Vector3(p1.x, inner_y, p1.y), Vector3(-n3.x * 0.3, -1.0, -n3.z * 0.3).normalized(), awning.darkened(0.3))
+	_tri(_trim, Vector3(p0.x, inner_y, p0.y), Vector3(q0.x, outer_y, q0.y), Vector3(q1.x, outer_y, q1.y), Vector3(-n3.x * 0.3, -1.0, -n3.z * 0.3).normalized(), awning.darkened(0.3))
+	_tri(_trim, Vector3(q0.x, outer_y, q0.y), Vector3(q1.x, outer_y, q1.y), Vector3(q1.x, outer_y - 0.25, q1.y), n3, awning.darkened(0.15))
+	_tri(_trim, Vector3(q0.x, outer_y, q0.y), Vector3(q1.x, outer_y - 0.25, q1.y), Vector3(q0.x, outer_y - 0.25, q0.y), n3, awning.darkened(0.15))
+	stats["storefronts"] = stats.get("storefronts", 0) + 1
+
+
+func _glass(a: Vector2, dir: Vector2, out2: Vector2, s0: float, s1: float, y0: float, y1: float, n3: Vector3) -> void:
+	var p0 := a + dir * s0 + out2 * 0.035
+	var p1 := a + dir * s1 + out2 * 0.035
+	_quad_wall(_windows, Vector3(p0.x, y0, p0.y), Vector3(p1.x, y0, p1.y), Vector3(p1.x, y1, p1.y), Vector3(p0.x, y1, p0.y), n3, COLOR_WINDOW.lightened(0.1))
 
 
 func _fill_windows(win: Callable, s0: float, s1: float, y_base: float) -> void:
