@@ -21,6 +21,7 @@ const Traffic := preload("res://scripts/traffic.gd")
 const CarMesh := preload("res://scripts/car_mesh.gd")
 const Daylight := preload("res://scripts/daylight.gd")
 const Minimap := preload("res://scripts/minimap.gd")
+const Hud := preload("res://scripts/hud.gd")
 const Ortho := preload("res://scripts/ortho.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
@@ -31,7 +32,8 @@ const ENTER_DISTANCE := 4.0
 var player: CharacterBody3D
 var car: VehicleBody3D
 var rig: Node3D
-var hud: Label
+var hud: Label  # the hint lines (kept for tools); the overlay is `overlay`
+var overlay: CanvasLayer
 var in_car := false
 var map_bounds := Rect2()
 var terrain: Terrain = null
@@ -202,32 +204,17 @@ func _setup_environment() -> void:
 
 
 func _build_hud() -> void:
-	var layer := CanvasLayer.new()
-	add_child(layer)
-	hud = Label.new()
-	hud.position = Vector2(16, 12)
-	hud.add_theme_color_override("font_shadow_color", Color.BLACK)
-	hud.add_theme_constant_override("shadow_offset_x", 1)
-	hud.add_theme_constant_override("shadow_offset_y", 1)
-	layer.add_child(hud)
-
-	var credit := Label.new()
-	credit.text = "Map data © OpenStreetMap contributors (ODbL)"
-	credit.anchor_left = 1.0
-	credit.anchor_right = 1.0
-	credit.anchor_top = 1.0
-	credit.anchor_bottom = 1.0
-	credit.offset_left = -360
-	credit.offset_top = -28
-	credit.add_theme_font_size_override("font_size", 12)
-	layer.add_child(credit)
+	overlay = Hud.new()
+	overlay.name = "HUD"
+	add_child(overlay)
+	hud = overlay.hints
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_mouse"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE \
 			if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
-	elif event is InputEventMouseButton and event.pressed:
+	elif event is InputEventMouseButton and event.pressed and not (minimap != null and minimap.full_open):
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	elif event.is_action_pressed("interact"):
 		if in_car:
@@ -236,6 +223,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			enter_car()
 	elif event.is_action_pressed("toggle_map") and minimap != null:
 		minimap.toggle_full()
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if minimap.full_open else Input.MOUSE_MODE_CAPTURED
 	elif event.is_action_pressed("time_forward"):
 		daylight.hour = fmod(daylight.hour + 1.0, 24.0)
 	elif event.is_action_pressed("time_back"):
@@ -262,7 +250,7 @@ func exit_car() -> void:
 	rig.set_target(player, 4.5, 1.6, false)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	# Safety net: anything that falls out of the world comes back to spawn.
 	if car.global_position.y < -50.0:
 		car.reset_upright(spawn_point + Vector3.UP * 2.0)
@@ -276,14 +264,18 @@ func _process(_delta: float) -> void:
 		pedestrians.set_focus(p)
 	if traffic != null:
 		traffic.set_focus(p)
-	var lines := PackedStringArray()
-	if in_car:
-		lines.append("%d km/h" % roundi(absf(car.forward_speed()) * 3.6))
-		lines.append("W/S throttle/brake  A/D steer  Space handbrake  R reset  E exit")
-	else:
-		lines.append("WASD move  Shift sprint  Ctrl walk  Space jump  Mouse look  M map  Esc release mouse")
-		if p.distance_to(car.global_position) < ENTER_DISTANCE:
-			lines.append("Press E to drive")
-	lines.append("%s   pos %.0f, %.0f" % [daylight.clock_text(), p.x, p.z])
 	daylight.set_focus(p)
-	hud.text = "\n".join(lines)
+	var state := {
+		"clock": daylight.clock_text(),
+		"driving": in_car,
+		"speed_ms": car.forward_speed() if in_car else 0.0,
+		"street": minimap.nearest_street(Vector2(p.x, p.z)) if minimap != null else "",
+		"gps_m": minimap.gps_distance() if minimap != null else -1.0,
+	}
+	if in_car:
+		state["hints"] = "W/S throttle/brake   A/D steer   Space handbrake   R reset   E exit   M map"
+		state["prompt"] = ""
+	else:
+		state["hints"] = "WASD move   Shift sprint   Ctrl walk   Space jump   Mouse look   M map   Esc release mouse"
+		state["prompt"] = "Press E to drive" if p.distance_to(car.global_position) < ENTER_DISTANCE else ""
+	overlay.update(delta, state)

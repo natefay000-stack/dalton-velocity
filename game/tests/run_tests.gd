@@ -760,6 +760,27 @@ func test_gameplay() -> void:
 	mm.toggle_full()
 	check(mm.full_open and mm._full.visible and not mm._mini.visible, "M opens the full map")
 	mm.toggle_full()
+	# GPS: a waypoint across the grid routes along roads, not as the crow flies.
+	check(mm.graph.size() >= 20, "road graph built (%d nodes)" % mm.graph.size())
+	var here := Vector2(car.global_position.x, car.global_position.z)
+	var there := Vector2(-200.0, 150.0)
+	mm.set_waypoint(there)
+	var on_road := 0
+	for q in mm.route:
+		if main._builder.occupancy.get_at(q.x, q.y) & Occupancy.ROAD:
+			on_road += 1
+	check(mm.route.size() >= 4 and on_road == mm.route.size(), "route follows roads (%d points, %d on road)" % [mm.route.size(), on_road])
+	check(mm.route_length > here.distance_to(there) and mm.route_length < here.distance_to(there) * 2.5, "route length sane (%.0f m vs %.0f m straight)" % [mm.route_length, here.distance_to(there)])
+	var world: Vector2 = mm.full_to_world(mm._full_origin + mm.to_px(there) * mm._full_fit)
+	check(world.distance_to(there) < 0.5, "full-map click maps back to world (%s)" % world)
+	mm.clear_waypoint()
+	check(not mm.has_waypoint and mm.gps_distance() < 0.0, "waypoint cleared")
+	# HUD banner shows the street you're on.
+	main.overlay.update(0.5, {"street": "Main Street", "clock": "10:00", "driving": true, "speed_ms": 10.0})
+	check(main.overlay.banner.text == "Main Street" and main.overlay.banner.modulate.a > 0.9, "street banner fades in")
+	check(main.overlay.speedo.visible and main.overlay.speedo.text == "36", "speedometer shows km/h")
+	main.overlay.update(6.0, {"street": "Main Street", "driving": false})
+	check(main.overlay.banner.modulate.a < 0.1 and not main.overlay.speedo.visible, "banner fades out, speedo hides on foot")
 	check(main.in_car, "entered car")
 	check(car.driver.visible and not player.visible, "driver shown in the car, player hidden")
 	var head_top := -INF

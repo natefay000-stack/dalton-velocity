@@ -5,6 +5,7 @@ extends CanvasLayer
 ## the name of the nearest street. Traffic and pedestrians appear as dots.
 
 const MapBuilder := preload("res://scripts/map_builder.gd")
+const RoadGraph := preload("res://scripts/road_graph.gd")
 
 const MINI_SIZE := 230.0
 const MINI_RADIUS_M := 140.0  # metres from player to the minimap edge
@@ -23,6 +24,8 @@ const C_PATH := Color(0.90, 0.88, 0.82)
 const C_PLAYER := Color(0.10, 0.45, 0.95)
 const C_TRAFFIC := Color(0.85, 0.15, 0.15)
 const C_PED := Color(0.95, 0.65, 0.10)
+const C_ROUTE := Color(0.65, 0.35, 0.95)
+const C_WAYPOINT := Color(0.95, 0.25, 0.65)
 
 var bounds := Rect2()
 var texture: Texture2D
@@ -38,6 +41,14 @@ var _full: Control
 var _street_label: Label
 var _street_timer := 0.0
 var _street := ""
+var graph: RoadGraph
+var has_waypoint := false
+var waypoint := Vector2.ZERO
+var route := PackedVector2Array()
+var route_length := -1.0
+var _route_timer := 0.0
+var _full_origin := Vector2.ZERO
+var _full_fit := 1.0
 
 
 func setup(builder: MapBuilder, map_bounds: Rect2, player: Node3D, traffic: Node3D, pedestrians: Node3D) -> void:
@@ -47,6 +58,8 @@ func setup(builder: MapBuilder, map_bounds: Rect2, player: Node3D, traffic: Node
 	_traffic = traffic
 	_pedestrians = pedestrians
 	layer = 5
+	graph = RoadGraph.new()
+	graph.build(builder.road_list, MapBuilder.DRIVABLE_TYPES)
 	_render_map(builder)
 
 	_mini = Control.new()
@@ -55,6 +68,7 @@ func setup(builder: MapBuilder, map_bounds: Rect2, player: Node3D, traffic: Node
 	_mini.position = Vector2(-MINI_SIZE - MARGIN, MARGIN)
 	_mini.size = Vector2(MINI_SIZE, MINI_SIZE + 26.0)
 	_mini.draw.connect(_draw_mini)
+	_mini.clip_contents = true
 	add_child(_mini)
 	_street_label = Label.new()
 	_street_label.position = Vector2(0, MINI_SIZE + 4.0)
@@ -70,6 +84,8 @@ func setup(builder: MapBuilder, map_bounds: Rect2, player: Node3D, traffic: Node
 	_full.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_full.visible = false
 	_full.draw.connect(_draw_full)
+	_full.mouse_filter = Control.MOUSE_FILTER_STOP
+	_full.gui_input.connect(_full_input)
 	add_child(_full)
 
 
@@ -79,12 +95,61 @@ func toggle_full() -> void:
 	_mini.visible = not full_open
 
 
+## Click on the full map: set (or move) the waypoint; right click clears it.
+func _full_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			set_waypoint(full_to_world(event.position))
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			clear_waypoint()
+
+
+func full_to_world(px: Vector2) -> Vector2:
+	return (px - _full_origin) / (_full_fit * scale_px) + bounds.position
+
+
+func set_waypoint(p: Vector2) -> void:
+	has_waypoint = true
+	waypoint = p
+	_route_timer = 0.0
+	_update_route()
+
+
+func clear_waypoint() -> void:
+	has_waypoint = false
+	route = PackedVector2Array()
+	route_length = -1.0
+
+
+## Straight-line-free distance to the waypoint along the route, or -1.
+func gps_distance() -> float:
+	return route_length
+
+
+func _update_route() -> void:
+	if not has_waypoint or _player == null:
+		return
+	var p := Vector2(_player.global_position.x, _player.global_position.z)
+	if p.distance_to(waypoint) < 12.0:
+		clear_waypoint()
+		return
+	route = graph.route(p, waypoint)
+	if route.is_empty():
+		route_length = p.distance_to(waypoint)
+	else:
+		route_length = graph.length_of(route) + route[route.size() - 1].distance_to(waypoint)
+
+
 func _process(delta: float) -> void:
 	if _player == null:
 		return
 	_mini.queue_redraw()
 	if full_open:
 		_full.queue_redraw()
+	_route_timer -= delta
+	if _route_timer <= 0.0:
+		_route_timer = 1.0
+		_update_route()
 	_street_timer -= delta
 	if _street_timer <= 0.0:
 		_street_timer = 0.5
@@ -200,6 +265,7 @@ func _draw_mini() -> void:
 	_mini.draw_rect(dst, Color(0, 0, 0, 0.55))
 	_mini.draw_texture_rect_region(texture, dst, src, Color(1, 1, 1, 0.92))
 	var k := MINI_SIZE / (half_px * 2.0)  # texture px -> minimap px
+	_draw_route(_mini, func(w: Vector2) -> Vector2: return (to_px(w) - px) * k + centre, 4.0, 7.0)
 	# Traffic and walkers.
 	if _traffic != null:
 		for car in _traffic.cars:
@@ -236,10 +302,27 @@ func _draw_full() -> void:
 	_full.draw_texture_rect(texture, Rect2(origin, dst_size), false)
 	var p := Vector2(_player.global_position.x, _player.global_position.z)
 	var d := origin + to_px(p) * fit
+	_full_origin = origin
+	_full_fit = fit
+	_draw_route(_full, func(w: Vector2) -> Vector2: return origin + to_px(w) * fit, 3.0, 6.0)
 	_full.draw_circle(d, 7.0, Color.WHITE)
 	_full.draw_circle(d, 5.0, C_PLAYER)
 	if _traffic != null:
 		for car in _traffic.cars:
 			var cp: Vector3 = car["node"].global_position
 			_full.draw_circle(origin + to_px(Vector2(cp.x, cp.z)) * fit, 3.0, C_TRAFFIC)
-	_full.draw_string(ThemeDB.fallback_font, origin + Vector2(0, dst_size.y + 22), "M to close   %s" % _street, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+	_full.draw_string(ThemeDB.fallback_font, origin + Vector2(0, dst_size.y + 22), "M to close   click: set waypoint   right click: clear   %s" % _street, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+
+
+## GPS line and waypoint marker through a world->screen mapping.
+func _draw_route(c: Control, to_screen: Callable, width: float, marker: float) -> void:
+	if not has_waypoint:
+		return
+	if route.size() >= 2:
+		var line := PackedVector2Array()
+		for w in route:
+			line.append(to_screen.call(w))
+		c.draw_polyline(line, C_ROUTE, width, true)
+	var m: Vector2 = to_screen.call(waypoint)
+	c.draw_circle(m, marker, C_WAYPOINT)
+	c.draw_circle(m, marker, Color.WHITE, false, 1.5)
