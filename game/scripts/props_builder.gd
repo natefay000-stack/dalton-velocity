@@ -80,7 +80,7 @@ func build(builder: MapBuilder, ground: Callable, seed: int = 1) -> Node3D:
 		var mesh: Mesh = meshes.get(key)
 		if mesh == null and key.begins_with("car:"):
 			var parts: PackedStringArray = key.split(":")
-			mesh = CarMesh.build_body(parts[1], CarMesh.PAINTS[parts[2].to_int()])
+			mesh = CarMesh.build_body(parts[1], CarMesh.PAINTS[parts[2].to_int()], false)
 		elif mesh == null and key.begins_with("wheel:"):
 			mesh = CarMesh.build_wheel(key.split(":")[1])
 		root.add_child(_multimesh(key, mesh))

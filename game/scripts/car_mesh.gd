@@ -1,10 +1,30 @@
 extends RefCounted
 ## Builds low-poly car meshes by sweeping a chamfered cross-section along a
 ## side profile: bumper, hood, windshield, roof, rear glass, trunk. Three
-## body styles. Surface 0 is painted bodywork, surface 1 lights and trim,
-## surface 2 tinted see-through glass, so one mesh works both as the
-## drivable car (driver visible inside) and as MultiMesh parked cars. The
-## nose points -Z; the origin is on the ground under the centre.
+## body styles. Surface 0 is painted bodywork, surface 1 trim, surface 2
+## tinted see-through glass, surfaces 3 and 4 the head- and taillights, so
+## one mesh works both as the drivable car (driver visible inside) and as
+## MultiMesh parked cars. The nose points -Z; the origin is on the ground
+## under the centre.
+##
+## Moving cars (`lit` = true) share the two emissive light materials below;
+## the day/night cycle turns their emission on at dusk. Parked cars get
+## plain, unlit lamps.
+
+static var headlight_material: StandardMaterial3D = _light_material(Color(1.0, 0.97, 0.88))
+static var taillight_material: StandardMaterial3D = _light_material(Color(1.0, 0.12, 0.06))
+
+
+static func _light_material(glow: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.roughness = 0.25
+	m.metallic = 0.2
+	m.emission_enabled = true
+	m.emission = glow
+	m.emission_energy_multiplier = 0.0
+	return m
+
 
 ## Station: [z, floor y, belt y, top y, half width, segment kind]. The kind
 ## describes the panel between this station and the next: "body", "bumper",
@@ -98,11 +118,15 @@ static func wheel_radius(style: String) -> float:
 
 
 ## Body with glass, lights and mirrors (no wheels).
-static func build_body(style: String, paint: Color) -> ArrayMesh:
+static func build_body(style: String, paint: Color, lit: bool = true) -> ArrayMesh:
 	var body := SurfaceTool.new()
 	body.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var trim := SurfaceTool.new()
 	trim.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var heads := SurfaceTool.new()
+	heads.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var tails := SurfaceTool.new()
+	tails.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var glass_st := SurfaceTool.new()
 	glass_st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var p: Array = PROFILES[style]
@@ -153,10 +177,10 @@ static func build_body(style: String, paint: Color) -> ArrayMesh:
 	var rear: Array = p[p.size() - 1]
 	for sx in [-1.0, 1.0]:
 		var hw: float = front[4]
-		_box(trim, Vector3(sx * (hw - 0.30), (front[2] + front[3]) * 0.5 + 0.06, front[0] - 0.01),
+		_box(heads, Vector3(sx * (hw - 0.30), (front[2] + front[3]) * 0.5 + 0.06, front[0] - 0.01),
 			Vector3(0.36, 0.16, 0.06), HEADLIGHT)
 		var rw: float = rear[4]
-		_box(trim, Vector3(sx * (rw - 0.28), (rear[2] + rear[3]) * 0.5 + 0.1, rear[0] + 0.01),
+		_box(tails, Vector3(sx * (rw - 0.28), (rear[2] + rear[3]) * 0.5 + 0.1, rear[0] + 0.01),
 			Vector3(0.34, 0.14, 0.06), TAILLIGHT)
 		# Mirror at the base of the A-pillar.
 		var ws := _station_of_kind(p, "ws")
@@ -186,6 +210,14 @@ static func build_body(style: String, paint: Color) -> ArrayMesh:
 	glass_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	glass_mat.render_priority = 1
 	mesh.surface_set_material(2, glass_mat)
+	mesh = heads.commit(mesh)
+	mesh = tails.commit(mesh)
+	if lit:
+		mesh.surface_set_material(3, headlight_material)
+		mesh.surface_set_material(4, taillight_material)
+	else:
+		mesh.surface_set_material(3, trim_mat)
+		mesh.surface_set_material(4, trim_mat)
 	return mesh
 
 

@@ -11,6 +11,7 @@ const Terrain := preload("res://scripts/terrain.gd")
 const Occupancy := preload("res://scripts/occupancy.gd")
 const PropsBuilder := preload("res://scripts/props_builder.gd")
 const Pedestrians := preload("res://scripts/pedestrians.gd")
+const CarMesh := preload("res://scripts/car_mesh.gd")
 const Traffic := preload("res://scripts/traffic.gd")
 const Daylight := preload("res://scripts/daylight.gd")
 const Ortho := preload("res://scripts/ortho.gd")
@@ -541,6 +542,26 @@ func test_props() -> void:
 	check(off_road == 0, "AI cars stay on roads over 15 s (%d samples off)" % off_road)
 	check(speeding == 0, "AI cars respect speed limits (%d samples over)" % speeding)
 	check(driving == 10, "AI cars keep driving (%d moved >10 m)" % driving)
+	# Night: the nearest cars carry real headlights, the lamps glow.
+	tr.set_focus(tr.cars[0]["node"].global_position)
+	tr.set_night(true)
+	tr._assign_beams()
+	var lit_cars := 0
+	for c in tr.cars:
+		for ch in c["node"].get_children():
+			if ch is SpotLight3D and ch.visible:
+				lit_cars += 1
+				break
+	check(lit_cars == Traffic.HEADLIGHT_CARS, "nearest %d AI cars get headlight beams at night (%d)" % [Traffic.HEADLIGHT_CARS, lit_cars])
+	tr.set_night(false)
+	var any_on := false
+	for l in tr._beams:
+		any_on = any_on or l.visible
+	check(not any_on, "beams go off by day")
+	var lit_mesh: ArrayMesh = CarMesh.build_body("sedan", Color.WHITE)
+	var parked_mesh: ArrayMesh = CarMesh.build_body("sedan", Color.WHITE, false)
+	check(lit_mesh.surface_get_material(3) == CarMesh.headlight_material and lit_mesh.surface_get_material(4) == CarMesh.taillight_material, "moving cars share the emissive lamp materials")
+	check(parked_mesh.surface_get_material(3) != CarMesh.headlight_material, "parked cars have unlit lamps")
 	tr.queue_free()
 	node.queue_free()
 	map.queue_free()

@@ -20,6 +20,7 @@ const FOLLOW_GAP := 3.5
 const ACCEL := 3.0
 const BRAKE := 7.0
 const ANIMATE_DISTANCE := 500.0
+const HEADLIGHT_CARS := 4  # nearest cars that cast real light at night
 
 var ground: Callable
 var cars: Array[Dictionary] = []
@@ -28,6 +29,9 @@ var _junctions: Dictionary = {}
 var _rng := RandomNumberGenerator.new()
 var _focus := Vector3.ZERO
 var _meshes: Dictionary = {}
+var _night := false
+var _beams: Array[SpotLight3D] = []  # pool of 2 * HEADLIGHT_CARS spotlights
+var _beam_timer := 0.0
 
 
 func setup(roads: Array[Dictionary], ground_fn: Callable, count: int, seed: int = 1) -> void:
@@ -105,7 +109,7 @@ func _spawn(edge: int, dist: float, dir: int) -> void:
 	ray.add_exception(body)
 	body.add_child(ray)
 	add_child(body)
-	var car := {"node": body, "edge": edge, "dist": dist, "dir": dir, "speed": 0.0,
+	var car := {"node": body, "edge": edge, "dist": dist, "dir": dir, "speed": 0.0, "style": style,
 		"wheels": wheels, "ray": ray, "radius": CarMesh.wheel_radius(style), "roll": 0.0,
 		"stuck": 0.0, "pass_until": -1.0, "offset": 0.0}
 	cars.append(car)
@@ -116,9 +120,61 @@ func set_focus(p: Vector3) -> void:
 	_focus = p
 
 
+## Night: the nearest cars' headlights throw real light on the road.
+func set_night(on: bool) -> void:
+	_night = on
+	if on and _beams.is_empty():
+		for i in HEADLIGHT_CARS * 2:
+			var l := SpotLight3D.new()
+			l.spot_range = 40.0
+			l.spot_angle = 30.0
+			l.light_energy = 5.0
+			l.light_color = Color(1.0, 0.97, 0.9)
+			l.shadow_enabled = false
+			l.visible = false
+			add_child(l)
+			_beams.append(l)
+	if not on:
+		for l in _beams:
+			l.visible = false
+	_beam_timer = 0.0
+
+
+func _assign_beams() -> void:
+	if not _night or cars.is_empty():
+		return
+	var order: Array = []
+	for i in cars.size():
+		order.append([cars[i]["node"].global_position.distance_squared_to(_focus), i])
+	order.sort()
+	for k in HEADLIGHT_CARS:
+		var l0 := _beams[k * 2]
+		var l1 := _beams[k * 2 + 1]
+		if k >= order.size():
+			l0.visible = false
+			l1.visible = false
+			continue
+		var c: Dictionary = cars[order[k][1]]
+		var node: Node3D = c["node"]
+		var nose: float = -CarMesh.dims(c["style"])["length"] * 0.5
+		for j in 2:
+			var l := _beams[k * 2 + j]
+			if l.get_parent() != node:
+				l.get_parent().remove_child(l)
+				node.add_child(l)
+			l.position = Vector3(-0.55 + 1.1 * j, 0.75, nose)
+			l.rotation_degrees = Vector3(-8.0, 0.0, 0.0)
+			l.visible = node.visible
+
+
 func _physics_process(delta: float) -> void:
 	for c in cars:
 		_drive(c, delta)
+	if _night:
+		_beam_timer -= delta
+		if _beam_timer <= 0.0:
+			_beam_timer = 1.0
+			_assign_beams()
 
 
 func _drive(c: Dictionary, delta: float) -> void:

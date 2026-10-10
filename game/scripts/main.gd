@@ -18,6 +18,7 @@ const Terrain := preload("res://scripts/terrain.gd")
 const PropsBuilder := preload("res://scripts/props_builder.gd")
 const Pedestrians := preload("res://scripts/pedestrians.gd")
 const Traffic := preload("res://scripts/traffic.gd")
+const CarMesh := preload("res://scripts/car_mesh.gd")
 const Daylight := preload("res://scripts/daylight.gd")
 const Minimap := preload("res://scripts/minimap.gd")
 const Ortho := preload("res://scripts/ortho.gd")
@@ -87,6 +88,8 @@ func _ready() -> void:
 		daylight.set_lamp_positions(heads)
 		daylight.add_night_material(props.lamp_material)
 		daylight.add_night_material(builder.window_material)
+		daylight.add_night_material(CarMesh.headlight_material)
+		daylight.add_night_material(CarMesh.taillight_material)
 		if pedestrian_count > 0:
 			pedestrians = Pedestrians.new()
 			pedestrians.name = "Pedestrians"
@@ -97,6 +100,7 @@ func _ready() -> void:
 			traffic.name = "Traffic"
 			traffic.setup(builder.road_list, ground_height, traffic_count, hash(path) + 1)
 			add_child(traffic)
+			traffic.set_night(daylight.is_night)
 		map_bounds = data.bounds
 		print("Loaded %s: %d roads, %d buildings, %d areas (%d skipped)" % [
 			path, builder.stats["roads"], builder.stats["buildings"],
@@ -192,7 +196,9 @@ func _setup_environment() -> void:
 	daylight.setup(self)
 	daylight.night_changed.connect(func(night: bool) -> void:
 		if car != null:
-			car.set_headlights(night))
+			car.set_headlights(night)
+		if traffic != null:
+			traffic.set_night(night))
 
 
 func _build_hud() -> void:
