@@ -4,9 +4,10 @@ extends Node3D
 ## Map selection, first match wins:
 ##   1. command line:  godot --path game -- --map=/abs/path/to/area.osm
 ##   2. `map_path` export on this node
-##   3. res://maps/neighborhood.osm if present (what tools/fetch_osm.py writes)
+##   3. the home map: res://maps/herriman.osm, else neighborhood.osm
 ##   4. any other .osm in res://maps/ (alphabetical), e.g. from fetch_overture.py
 ##   5. res://maps/sample.osm (synthetic grid that ships with the repo)
+## Other maps are reached from the pause menu's Travel buttons.
 ## A <map>.height file next to the .osm adds terrain.
 
 const OsmData := preload("res://scripts/osm_data.gd")
@@ -28,7 +29,8 @@ const Wildlife := preload("res://scripts/wildlife.gd")
 const TrafficSignals := preload("res://scripts/traffic_signals.gd")
 const Ortho := preload("res://scripts/ortho.gd")
 
-const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
+const HOME_MAPS := ["res://maps/herriman.osm", "res://maps/neighborhood.osm"]
+const SAMPLE_MAP := "res://maps/sample.osm"
 const ENTER_DISTANCE := 4.0
 
 @export_file("*.osm") var map_path := ""
@@ -216,16 +218,17 @@ func _resolve_map_path() -> String:
 			return arg.trim_prefix("--map=")
 	if map_path != "":
 		return map_path
-	if FileAccess.file_exists(DEFAULT_MAPS[0]):
-		return DEFAULT_MAPS[0]
+	for home in HOME_MAPS:
+		if FileAccess.file_exists(home):
+			return home
 	var found := PackedStringArray()
 	for f in DirAccess.get_files_at("res://maps"):
-		if f.get_extension() == "osm" and "res://maps/" + f != DEFAULT_MAPS[1]:
+		if f.get_extension() == "osm" and "res://maps/" + f != SAMPLE_MAP:
 			found.append("res://maps/" + f)
 	found.sort()
 	if not found.is_empty():
 		return found[0]
-	return DEFAULT_MAPS[1] if FileAccess.file_exists(DEFAULT_MAPS[1]) else ""
+	return SAMPLE_MAP if FileAccess.file_exists(SAMPLE_MAP) else ""
 
 
 func _setup_input() -> void:
