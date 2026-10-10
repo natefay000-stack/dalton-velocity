@@ -98,7 +98,3 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	model.update_motion(delta, velocity, is_on_floor())
 
-	# Fell through the world somehow — put back on the ground.
-	if global_position.y < -50.0:
-		global_position.y = 5.0
-		velocity = Vector3.ZERO

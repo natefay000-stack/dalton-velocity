@@ -53,3 +53,53 @@ class ResponseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClipTests(unittest.TestCase):
+    """fetch_overture's bbox clipping (stdlib-only parts; no pyarrow needed)."""
+
+    BBOX = (0.0, 0.0, 1.0, 1.0)  # south, west, north, east
+
+    def setUp(self) -> None:
+        import importlib
+        self.fo = importlib.import_module("fetch_overture")
+
+    def test_line_crossing_box_is_trimmed(self) -> None:
+        pieces = self.fo.clip_line([(-1.0, 0.5), (2.0, 0.5)], self.BBOX)
+        self.assertEqual(pieces, [[(0.0, 0.5), (1.0, 0.5)]])
+
+    def test_line_leaving_and_reentering_splits(self) -> None:
+        pts = [(0.5, 0.5), (0.5, 2.0), (0.6, 2.0), (0.6, 0.5)]
+        self.assertEqual(len(self.fo.clip_line(pts, self.BBOX)), 2)
+
+    def test_line_outside_dropped(self) -> None:
+        self.assertEqual(self.fo.clip_line([(2.0, 2.0), (3.0, 3.0)], self.BBOX), [])
+
+    def test_ring_clipped_and_closed(self) -> None:
+        ring = [(-1.0, -1.0), (0.5, -1.0), (0.5, 0.5), (-1.0, 0.5), (-1.0, -1.0)]
+        out = self.fo.clip_ring(ring, self.BBOX)
+        self.assertEqual(out[0], out[-1])
+        self.assertEqual(sorted(set(out)), [(0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)])
+        self.assertEqual(self.fo.clip_ring([(2, 2), (3, 2), (3, 3), (2, 2)], self.BBOX), [])
+
+    def test_wkb_linestring_and_polygon(self) -> None:
+        import struct
+        line = b"\x01" + struct.pack("<II", 2, 2) + struct.pack("<4d", 0, 0, 1, 1)
+        self.assertEqual(self.fo.parse_wkb(line), ("line", [[(0.0, 0.0), (1.0, 1.0)]]))
+        ring = [(0, 0), (1, 0), (1, 1), (0, 0)]
+        poly = b"\x01" + struct.pack("<III", 3, 1, 4) + b"".join(struct.pack("<2d", *p) for p in ring)
+        kind, parts = self.fo.parse_wkb(poly)
+        self.assertEqual(kind, "polygon")
+        self.assertEqual(parts[0][0], [tuple(map(float, p)) for p in ring])
+
+    def test_png_decoder_terrarium_pixel(self) -> None:
+        import struct, zlib
+        # 2x1 RGB image, filter 1 (sub) on the row: pixels (128,0,0) and (128,10,0).
+        raw = bytes([1, 128, 0, 0, 0, 10, 0])
+        def chunk(t: bytes, d: bytes) -> bytes:
+            return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 1, 8, 2, 0, 0, 0))
+               + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+        w, h, rows = self.fo.decode_png_rgb(png)
+        self.assertEqual((w, h), (2, 1))
+        self.assertEqual(rows[0], bytes([128, 0, 0, 128, 10, 0]))  # -> 0 m and 10 m

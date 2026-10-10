@@ -20,6 +20,7 @@ var relations: Array[Dictionary] = []
 
 var origin_lat := 0.0
 var origin_lon := 0.0
+var m_per_lon := METERS_PER_DEG_LON_EQUATOR
 ## Local-space bounds (meters) of all projected nodes.
 var bounds := Rect2()
 
@@ -140,12 +141,10 @@ func _project() -> void:
 
 	# Equirectangular projection around the origin. Error is negligible at
 	# neighbourhood scale (a few km).
-	var m_per_lon := METERS_PER_DEG_LON_EQUATOR * cos(deg_to_rad(origin_lat))
+	m_per_lon = METERS_PER_DEG_LON_EQUATOR * cos(deg_to_rad(origin_lat))
 	var first := true
 	for id in _lat:
-		var p := Vector2(
-			(_lon[id] - origin_lon) * m_per_lon,
-			-(_lat[id] - origin_lat) * METERS_PER_DEG_LAT)
+		var p := project(_lat[id], _lon[id])
 		points[id] = p
 		if first:
 			bounds = Rect2(p, Vector2.ZERO)
@@ -154,6 +153,17 @@ func _project() -> void:
 			bounds = bounds.expand(p)
 	_lat.clear()
 	_lon.clear()
+	# Extracts include whole ways that cross the edge; the declared <bounds>
+	# is the area the map is about.
+	if not _bounds_tag.is_empty():
+		var nw := project(_bounds_tag["maxlat"], _bounds_tag["minlon"])
+		var se := project(_bounds_tag["minlat"], _bounds_tag["maxlon"])
+		bounds = Rect2(nw, se - nw)
+
+
+## Lat/lon -> local metres (x east, y = z south). Valid after parse_file().
+func project(lat: float, lon: float) -> Vector2:
+	return Vector2((lon - origin_lon) * m_per_lon, -(lat - origin_lat) * METERS_PER_DEG_LAT)
 
 
 ## Returns the projected polyline for a way, skipping nodes that are missing

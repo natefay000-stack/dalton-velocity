@@ -54,6 +54,9 @@ const IDLE_SPEED := 0.15
 const SETTLE_DISTANCE := 0.12
 const SETTLE_TIME := 0.28
 const SHOULDER_ROLL := 0.08
+## Ground probe range above/below the character's floor height.
+const PROBE_UP := 0.9
+const PROBE_DOWN := 1.2
 ## Ignore floor contact blips shorter than this (CharacterBody3D can report
 ## is_on_floor() false for a frame on seams).
 const AIR_GRACE := 0.12
@@ -247,11 +250,10 @@ func update_motion(delta: float, velocity: Vector3, grounded: bool) -> void:
 ## gait cycle; [0, duty) is stance, [duty, 1) swing.
 func _gait_foot(side: String, u: float, duty: float, cycle: float, vel: Vector3, run: float) -> void:
 	var f: Dictionary = _feet[side]
-	var ground := global_position.y + ANKLE
 	if u < duty:
 		if not f["planted"]:
 			f["planted"] = true  # touchdown: lock where the swing ended
-			f["pos"].y = ground
+			_snap_to_ground(f)
 		# Late stance: heel peels off while the ball of the foot stays down.
 		var q := u / duty
 		f["pitch"] = smoothstep(0.55, 1.0, q) * TOE_OFF_PITCH
@@ -266,10 +268,13 @@ func _gait_foot(side: String, u: float, duty: float, cycle: float, vel: Vector3,
 		# Land half a stance ahead of where the body will be at touchdown.
 		var remaining := (1.0 - s) * (1.0 - duty) * cycle
 		var land := global_position + vel * (remaining + duty * cycle * 0.5) + _rest_offset(side)
-		land.y = ground
-		var p: Vector3 = (f["from"] as Vector3).lerp(land, smoothstep(0.0, 1.0, s))
-		p.y = ground + sin(PI * s) * lerpf(SWING_LIFT, SWING_LIFT * 2.2, run)
+		var hit := _probe(land)
+		land = hit[0] + hit[1] * ANKLE
+		var k := smoothstep(0.0, 1.0, s)
+		var p: Vector3 = (f["from"] as Vector3).lerp(land, k)
+		p.y += sin(PI * s) * lerpf(SWING_LIFT, SWING_LIFT * 2.2, run)
 		f["pos"] = p
+		f["n"] = (f["n"] as Vector3).slerp(hit[1], k)
 		f["pitch"] = lerpf(TOE_OFF_PITCH, 0.0, smoothstep(0.0, 0.6, s)) - 0.15 * smoothstep(0.6, 1.0, s)
 		f["lift"] = _pivot_lift(f["pitch"])
 
@@ -286,12 +291,13 @@ func _settle_feet(delta: float) -> void:
 			var s := minf(f["settle"], 1.0)
 			var rest := _rest_world(side)
 			var p: Vector3 = (f["from"] as Vector3).lerp(rest, smoothstep(0.0, 1.0, s))
-			p.y = rest.y + sin(PI * s) * SWING_LIFT
+			p.y += sin(PI * s) * SWING_LIFT
 			f["pos"] = p
 			f["planted"] = false
 			if s >= 1.0:
 				f["settle"] = -1.0
 				f["planted"] = true
+				_snap_to_ground(f)
 			return  # one foot steps at a time
 	for side in ["l", "r"]:
 		var f: Dictionary = _feet[side]
@@ -324,13 +330,42 @@ func _rest_offset(side: String) -> Vector3:
 
 
 func _rest_world(side: String) -> Vector3:
-	return global_position + _rest_offset(side) + Vector3(0.0, ANKLE, 0.0)
+	var hit := _probe(global_position + _rest_offset(side))
+	return hit[0] + hit[1] * ANKLE
+
+
+## [ground point, ground normal] under `at` (world xz). Raycasts against
+## everything except our own body; without a hit (no physics world, off the
+## edge) the character's floor is assumed flat at its own height.
+func _probe(at: Vector3) -> Array:
+	var ref_y := global_position.y
+	if is_inside_tree():
+		var space := get_world_3d().direct_space_state
+		if space != null:
+			var q := PhysicsRayQueryParameters3D.create(
+				Vector3(at.x, ref_y + PROBE_UP, at.z), Vector3(at.x, ref_y - PROBE_DOWN, at.z))
+			var body := get_parent() as CollisionObject3D
+			if body != null:
+				q.exclude = [body.get_rid()]
+			var hit := space.intersect_ray(q)
+			if not hit.is_empty() and (hit["normal"] as Vector3).y > 0.5:
+				return [hit["position"], hit["normal"]]
+	return [Vector3(at.x, ref_y, at.z), Vector3.UP]
+
+
+## Puts a foot that is touching down exactly on the ground below it.
+func _snap_to_ground(f: Dictionary) -> void:
+	var hit := _probe(f["pos"])
+	f["pos"] = hit[0] + hit[1] * ANKLE
+	f["n"] = hit[1]
 
 
 func _reset_feet() -> void:
 	for side in ["l", "r"]:
+		var hit := _probe(global_position + _rest_offset(side))
+		var p: Vector3 = hit[0] + hit[1] * ANKLE
 		_feet[side] = {
-			"pos": _rest_world(side), "from": _rest_world(side), "planted": true,
+			"pos": p, "from": p, "planted": true, "n": hit[1],
 			"lift": 0.0, "pitch": 0.0, "settle": -1.0,
 		}
 
@@ -391,8 +426,15 @@ func _solve_leg(side: String) -> float:
 
 	hip.basis = Basis(Vector3.BACK, roll) * Basis(Vector3.RIGHT, thigh)
 	knee.basis = Basis(Vector3.RIGHT, bend)
-	# Foot flat to the hips (i.e. to the ground), plus heel/toe pitch.
-	ankle.basis = Basis(Vector3.RIGHT, -(thigh + bend)) * Basis(Vector3.BACK, -roll) \
+	# Sole parallel to the ground under it (facing where the body faces),
+	# plus heel/toe pitch. Solved in world space, then made local.
+	var up: Vector3 = _feet[side]["n"]
+	var fwd := global_basis.z.slide(up).normalized()
+	if fwd.length_squared() < 0.5:
+		fwd = global_basis.z
+	var foot_world := Basis(up.cross(fwd).normalized(), up, fwd)
+	var parent_world: Basis = hips.global_basis * hip.basis * knee.basis
+	ankle.basis = parent_world.orthonormalized().inverse() * foot_world \
 		* Basis(Vector3.RIGHT, -_feet[side]["pitch"])  # +pitch = toes down
 	_pose["hip_" + side] = thigh
 	_pose["knee_" + side] = bend

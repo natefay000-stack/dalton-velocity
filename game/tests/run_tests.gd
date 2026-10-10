@@ -7,6 +7,7 @@ const OsmData := preload("res://scripts/osm_data.gd")
 const MapBuilder := preload("res://scripts/map_builder.gd")
 const Humanoid := preload("res://scripts/humanoid.gd")
 const GltfCharacter := preload("res://scripts/gltf_character.gd")
+const Terrain := preload("res://scripts/terrain.gd")
 
 var failures := 0
 
@@ -31,6 +32,8 @@ func _run() -> void:
 	print("character")
 	test_humanoid()
 	test_clip_matching()
+	print("terrain")
+	await test_terrain()
 	print("physics")
 	await test_gameplay()
 	print("%s (%d failure%s)" % ["PASSED" if failures == 0 else "FAILED", failures, "" if failures == 1 else "s"])
@@ -43,8 +46,9 @@ func test_sample_parse() -> void:
 	check(d.points.size() == 567, "all 567 nodes projected (got %d)" % d.points.size())
 	check(d.ways.size() == 140, "all 140 ways read (got %d)" % d.ways.size())
 	# Grid is 4 x 110 m blocks centred on the origin.
-	check(absf(d.bounds.size.x - 440.0) < 1.0, "east-west extent ~440 m (got %.2f)" % d.bounds.size.x)
-	check(absf(d.bounds.size.y - 440.0) < 1.0, "north-south extent ~440 m (got %.2f)" % d.bounds.size.y)
+	# Grid is 440 m; the declared <bounds> adds a 60 m margin each side.
+	check(absf(d.bounds.size.x - 560.0) < 1.0, "east-west extent from <bounds> ~560 m (got %.2f)" % d.bounds.size.x)
+	check(absf(d.bounds.size.y - 560.0) < 1.0, "north-south extent from <bounds> ~560 m (got %.2f)" % d.bounds.size.y)
 	check(d.bounds.get_center().length() < 1.0, "map centred on origin")
 	# Node 1 is the north-west grid corner: x = -220 (west), z = -220 (north).
 	var p: Vector2 = d.points[1]
@@ -249,8 +253,146 @@ func test_clip_matching() -> void:
 	check(GltfCharacter.load_from("res://does/not/exist.glb") == null, "missing model -> null (procedural fallback)")
 
 
+## Writes a .height file over the sample map: a 12% east-up slope with
+## north-south undulation, so every terrain path is exercised without
+## downloaded data.
+func _write_test_height(d: OsmData, path: String) -> void:
+	var b: Dictionary = d._bounds_tag
+	var cols := 141
+	var rows := 141
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_buffer("HGT1".to_ascii_buffer())
+	for v in [b["minlat"], b["minlon"], b["maxlat"], b["maxlon"]]:
+		f.store_double(v)
+	f.store_32(cols)
+	f.store_32(rows)
+	for r in rows:
+		for c in cols:
+			var x := 560.0 * c / (cols - 1)
+			var z := 560.0 * r / (rows - 1)
+			f.store_float(1400.0 + 0.12 * x + 4.0 * sin(z / 35.0))
+	f.close()
+
+
+func test_terrain() -> void:
+	var d := OsmData.new()
+	d.parse_file("res://maps/sample.osm")
+	var path := "user://terrain_test.height"
+	_write_test_height(d, path)
+	var t := Terrain.new()
+	check(t.load_file(path, d) == OK, "height file loads")
+	check(absf(t.base_elevation - 1396.0) < 0.5, "base elevation subtracted (%.1f)" % t.base_elevation)
+	check(t.get_rect().grow(1.0).encloses(d.bounds), "terrain covers the map bounds")
+	var bad := "user://bad.height"
+	var bf := FileAccess.open(bad, FileAccess.WRITE)
+	bf.store_buffer("NOPE".to_ascii_buffer())
+	bf.close()
+	check(Terrain.new().load_file(bad, d) != OK, "corrupt height file rejected")
+
+	var b := MapBuilder.new()
+	var map := b.build(d, t)
+	root.add_child(map)
+	await physics_frame
+	await physics_frame
+
+	# Collision surface == height_at() everywhere (same triangle split).
+	var space := map.get_world_3d().direct_space_state
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var worst := 0.0
+	var rect := t.get_rect().grow(-2.0)
+	for i in 200:
+		var x := rng.randf_range(rect.position.x, rect.end.x)
+		var z := rng.randf_range(rect.position.y, rect.end.y)
+		var q := PhysicsRayQueryParameters3D.create(Vector3(x, 500, z), Vector3(x, -50, z))
+		var hit := space.intersect_ray(q)
+		if not hit.is_empty() and hit["collider"].name == "Terrain":
+			worst = maxf(worst, absf(hit["position"].y - t.height_at(x, z)))
+	check(worst < 0.01, "terrain collision matches height_at (worst %.4f m)" % worst)
+
+	# Roads draped just above the ground; buildings reach into it.
+	var road_v: PackedVector3Array = (map.get_node("Roads") as MeshInstance3D).mesh.get_faces()
+	var lo := INF
+	var hi := -INF
+	for v in road_v:
+		var gap := v.y - t.height_at(v.x, v.z)
+		lo = minf(lo, gap)
+		hi = maxf(hi, gap)
+	check(lo > 0.03 and hi < 0.25, "roads hug the terrain (gap %.3f..%.3f m)" % [lo, hi])
+	var floating := 0
+	var bld: PackedVector3Array = (map.get_node("Buildings/Mesh") as MeshInstance3D).mesh.get_faces()
+	# Wall corners are the xz columns holding both a bottom and a top vertex
+	# (roof overhangs and ridges are single-height columns).
+	var col_min := {}
+	var col_max := {}
+	for v in bld:
+		var key := Vector2i(roundi(v.x * 10), roundi(v.z * 10))
+		col_min[key] = minf(col_min.get(key, INF), v.y)
+		col_max[key] = maxf(col_max.get(key, -INF), v.y)
+	var walls := 0
+	for key in col_min:
+		if col_max[key] - col_min[key] < 1.0:
+			continue
+		walls += 1
+		if col_min[key] > t.height_at(key.x / 10.0, key.y / 10.0) + 0.01:
+			floating += 1
+	check(walls > 400, "found wall corners to check (%d)" % walls)
+	check(floating == 0, "no building corner floats above the slope (%d)" % floating)
+	check(b.stats.get("hip_roofs", 0) > 100, "houses get hipped roofs (%d)" % b.stats.get("hip_roofs", 0))
+	check(absf(b.spawn_position.y - t.height_at(b.spawn_position.x, b.spawn_position.z)) < 0.01, "spawn on the ground")
+
+	# Walking uphill: planted feet sit on the slope, don't slide or sink.
+	var h: Node3D = Humanoid.new()
+	h.build()
+	root.add_child(h)
+	var start := Vector3(-150, 0, 40)
+	start.y = t.height_at(start.x, start.z)
+	h.global_position = start
+	h.rotation.y = -PI / 2  # face +X = uphill
+	var dt := 1.0 / 60.0
+	for i in 20:
+		h.update_motion(dt, Vector3.ZERO, true)
+	var vel := Vector3(1.6, 0, 0)
+	var max_slide := 0.0
+	var max_sink := 0.0
+	var max_gap := 0.0
+	var prev := {}
+	for i in 240:
+		var p := h.global_position + vel * dt
+		p.y = t.height_at(p.x, p.z)
+		h.global_position = p
+		h.update_motion(dt, vel, true)
+		await physics_frame
+		for side in ["l", "r"]:
+			var f: Dictionary = h._feet[side]
+			var ankle: Vector3 = h.joints["ankle_" + side].global_position
+			if f["planted"] and i > 40:
+				var g := t.height_at(f["pos"].x, f["pos"].z)
+				max_gap = maxf(max_gap, absf(f["pos"].y - (g + h.ANKLE * (f["n"] as Vector3).y)))
+				if prev.get(side) != null:
+					# Horizontal only: the heel rising at toe-off is intended.
+					var pv: Vector3 = prev[side]
+					max_slide = maxf(max_slide, Vector2(ankle.x - pv.x, ankle.z - pv.z).length())
+			prev[side] = ankle if f["planted"] else null
+		if i > 40 and i % 4 == 0:
+			for side in ["l", "r"]:
+				var ankle_node: Node3D = h.joints["ankle_" + side]
+				for mi in ankle_node.get_children():
+					var xf: Transform3D = mi.global_transform
+					for v in (mi as MeshInstance3D).mesh.get_faces():
+						var w: Vector3 = xf * v
+						max_sink = maxf(max_sink, t.height_at(w.x, w.z) - w.y)
+	check(max_gap < 0.03, "slope: planted ankles at ground height (max gap %.3f m)" % max_gap)
+	check(max_slide < 0.003, "slope: planted feet don't slide (max %.1f mm/frame)" % (max_slide * 1000.0))
+	check(max_sink < 0.03, "slope: shoes don't sink into the hill (max %.3f m)" % max_sink)
+	h.free()
+	map.queue_free()
+	await process_frame
+
+
 func test_gameplay() -> void:
 	var main: Node3D = load("res://main.tscn").instantiate()
+	main.map_path = "res://maps/sample.osm"  # not whatever map is installed locally
 	root.add_child(main)
 	for i in 120:
 		await physics_frame

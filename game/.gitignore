@@ -3,3 +3,6 @@ export/
 maps/*.osm
 !maps/sample.osm
 __pycache__/
+maps/*.height
+!maps/sample.height
+*.part

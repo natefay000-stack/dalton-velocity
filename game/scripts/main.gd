@@ -5,13 +5,16 @@ extends Node3D
 ##   1. command line:  godot --path game -- --map=/abs/path/to/area.osm
 ##   2. `map_path` export on this node
 ##   3. res://maps/neighborhood.osm if present (what tools/fetch_osm.py writes)
-##   4. res://maps/sample.osm (synthetic grid that ships with the repo)
+##   4. any other .osm in res://maps/ (alphabetical), e.g. from fetch_overture.py
+##   5. res://maps/sample.osm (synthetic grid that ships with the repo)
+## A <map>.height file next to the .osm adds terrain.
 
 const OsmData := preload("res://scripts/osm_data.gd")
 const MapBuilder := preload("res://scripts/map_builder.gd")
 const PlayerScript := preload("res://scripts/player.gd")
 const CarScript := preload("res://scripts/car.gd")
 const CameraRig := preload("res://scripts/camera_rig.gd")
+const Terrain := preload("res://scripts/terrain.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
 const ENTER_DISTANCE := 4.0
@@ -24,6 +27,8 @@ var rig: Node3D
 var hud: Label
 var in_car := false
 var map_bounds := Rect2()
+var terrain: Terrain = null
+var spawn_point := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -35,7 +40,16 @@ func _ready() -> void:
 	var builder := MapBuilder.new()
 	var err := data.parse_file(path) if path != "" else ERR_FILE_NOT_FOUND
 	if err == OK:
-		add_child(builder.build(data))
+		var height_path := path.get_basename() + ".height"
+		if FileAccess.file_exists(height_path):
+			terrain = Terrain.new()
+			if terrain.load_file(height_path, data) != OK:
+				push_warning("Ignoring unreadable terrain %s" % height_path)
+				terrain = null
+		var t0 := Time.get_ticks_msec()
+		add_child(builder.build(data, terrain))
+		print("Built map in %d ms%s" % [Time.get_ticks_msec() - t0,
+			" (terrain %dx%d, base %.0f m)" % [terrain.cols, terrain.rows, terrain.base_elevation] if terrain else ""])
 		map_bounds = data.bounds
 		print("Loaded %s: %d roads, %d buildings, %d areas (%d skipped)" % [
 			path, builder.stats["roads"], builder.stats["buildings"],
@@ -59,12 +73,18 @@ func _ready() -> void:
 	add_child(player)
 	# Stand on the kerb beside the car.
 	var side := Basis(Vector3.UP, builder.spawn_yaw) * Vector3(-3.0, 0.0, 0.0)
-	player.global_position = builder.spawn_position + side + Vector3.UP * 0.1
+	spawn_point = builder.spawn_position + side
+	spawn_point.y = ground_height(spawn_point.x, spawn_point.z) + 0.1
+	player.global_position = spawn_point
 
 	rig.set_target(player, 4.5, 1.6, false)
 	rig.yaw = builder.spawn_yaw
 	_build_hud()
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func ground_height(x: float, z: float) -> float:
+	return terrain.height_at(x, z) if terrain != null else 0.0
 
 
 func _resolve_map_path() -> String:
@@ -73,10 +93,16 @@ func _resolve_map_path() -> String:
 			return arg.trim_prefix("--map=")
 	if map_path != "":
 		return map_path
-	for p in DEFAULT_MAPS:
-		if FileAccess.file_exists(p):
-			return p
-	return ""
+	if FileAccess.file_exists(DEFAULT_MAPS[0]):
+		return DEFAULT_MAPS[0]
+	var found := PackedStringArray()
+	for f in DirAccess.get_files_at("res://maps"):
+		if f.get_extension() == "osm" and "res://maps/" + f != DEFAULT_MAPS[1]:
+			found.append("res://maps/" + f)
+	found.sort()
+	if not found.is_empty():
+		return found[0]
+	return DEFAULT_MAPS[1] if FileAccess.file_exists(DEFAULT_MAPS[1]) else ""
 
 
 func _setup_input() -> void:
@@ -111,6 +137,10 @@ func _setup_environment() -> void:
 	var sky_mat := ProceduralSkyMaterial.new()
 	sky_mat.sky_top_color = Color(0.35, 0.55, 0.85)
 	sky_mat.sky_horizon_color = Color(0.75, 0.82, 0.9)
+	# Below-horizon colours: haze over dry ground rather than the default
+	# dark brown, in case the view reaches past the terrain skirt.
+	sky_mat.ground_horizon_color = Color(0.75, 0.82, 0.9)
+	sky_mat.ground_bottom_color = Color(0.55, 0.52, 0.42)
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	var env := Environment.new()
@@ -120,7 +150,7 @@ func _setup_environment() -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.75, 0.82, 0.9)
-	env.fog_density = 0.0015
+	env.fog_density = 0.00035
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -182,6 +212,12 @@ func exit_car() -> void:
 
 
 func _process(_delta: float) -> void:
+	# Safety net: anything that falls out of the world comes back to spawn.
+	if car.global_position.y < -50.0:
+		car.reset_upright(spawn_point + Vector3.UP * 2.0)
+	if player.global_position.y < -50.0:
+		player.global_position = spawn_point + Vector3.UP
+		player.velocity = Vector3.ZERO
 	if hud == null:
 		return
 	var p := car.global_position if in_car else player.global_position

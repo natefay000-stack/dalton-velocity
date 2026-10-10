@@ -20,6 +20,24 @@ It loads, in order: `--map=<path>` on the command line
 
 ## Your neighbourhood
 
+**Recommended — Overture Maps + terrain** (roads, footpaths, water and land
+use from OpenStreetMap; buildings merged with Microsoft/Google footprints, so
+suburbs are nearly complete; plus a 4 m elevation grid):
+
+```bash
+pip install pyarrow   # the only dependency, for reading Overture's GeoParquet
+python3 game/tools/fetch_overture.py --bbox SOUTH WEST NORTH EAST -o game/maps/home.osm
+# e.g. Herriman, Blackridge Reservoir area:
+python3 game/tools/fetch_overture.py --bbox 40.470 -112.032 40.489 -112.006 -o game/maps/herriman.osm
+```
+
+This writes `home.osm` + `home.height`; the game picks up any `.osm` in
+`maps/` and its matching `.height` automatically. Takes about a minute for a
+few km². Everything is clipped to the box, and the edge of the map has
+invisible walls.
+
+**Alternative — Overpass (OSM only, flat):**
+
 ```bash
 python3 game/tools/fetch_osm.py --center <lat> <lon> --radius 400
 # or: --bbox SOUTH WEST NORTH EAST
@@ -61,7 +79,9 @@ Esc releases the mouse; click to recapture.
 ```
 project.godot, main.tscn   entry point (scene is built in code)
 scripts/osm_data.gd        .osm XML parser + lat/lon -> local metres projection
-scripts/map_builder.gd     roads, buildings, land use -> merged meshes + collision
+scripts/map_builder.gd     roads, buildings (hip roofs), land use, water -> meshes + collision
+scripts/terrain.gd         .height grid -> terrain mesh, HeightMapShape3D, edge walls
+tools/fetch_overture.py    Overture Maps + AWS terrain tiles -> .osm + .height
 scripts/main.gd            input map, sky/sun, spawn, enter/exit car, HUD
 scripts/player.gd          CharacterBody3D on-foot controller
 scripts/humanoid.gd        procedural person + walk/run animation
@@ -88,8 +108,9 @@ cd game && python3 -m unittest discover -s tools
 
 ## Known limits / next steps
 
-- Flat world: no elevation. Next step is sampling an SRTM/USGS DEM and
-  draping roads and building bases onto it.
+- Terrain comes from a ~3–10 m elevation model resampled to 4 m, so curbs,
+  driveways and retaining walls aren't in it; roads are draped over it, not
+  cut into it.
 - Whole map is built at load time as a few merged meshes. Fine for a few km²;
   beyond that, chunk by tile and stream.
 - Primitive visuals. Swap in CC0 models (Quaternius, KayKit, Kenney) for the

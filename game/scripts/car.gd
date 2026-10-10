@@ -126,8 +126,6 @@ func _physics_process(delta: float) -> void:
 	engine_force = -force
 	brake = brake_force
 
-	if global_position.y < -50.0:
-		reset_upright(global_position + Vector3.UP * 60.0)
 
 
 func reset_upright(at: Vector3) -> void:
