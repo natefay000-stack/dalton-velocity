@@ -20,6 +20,7 @@ const Pedestrians := preload("res://scripts/pedestrians.gd")
 const Traffic := preload("res://scripts/traffic.gd")
 const Daylight := preload("res://scripts/daylight.gd")
 const Minimap := preload("res://scripts/minimap.gd")
+const Ortho := preload("res://scripts/ortho.gd")
 
 const DEFAULT_MAPS := ["res://maps/neighborhood.osm", "res://maps/sample.osm"]
 const ENTER_DISTANCE := 4.0
@@ -64,6 +65,12 @@ func _ready() -> void:
 			if terrain.load_file(height_path, data) != OK:
 				push_warning("Ignoring unreadable terrain %s" % height_path)
 				terrain = null
+		var ortho := Ortho.new()
+		if ortho.load_for(path, data) == OK:
+			builder.ortho = ortho
+			if terrain != null:
+				terrain.ortho = ortho
+			print("Aerial photo %dx%d px" % [ortho.width, ortho.height])
 		var t0 := Time.get_ticks_msec()
 		add_child(builder.build(data, terrain))
 		print("Built map in %d ms%s" % [Time.get_ticks_msec() - t0,

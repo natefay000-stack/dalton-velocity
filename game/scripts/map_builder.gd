@@ -9,6 +9,7 @@ const OsmData := preload("res://scripts/osm_data.gd")
 const Terrain := preload("res://scripts/terrain.gd")
 const Occupancy := preload("res://scripts/occupancy.gd")
 const Surfaces := preload("res://scripts/surfaces.gd")
+const Ortho := preload("res://scripts/ortho.gd")
 
 const ROAD_WIDTHS := {
 	"motorway": 14.0, "trunk": 12.0, "primary": 10.0, "secondary": 9.0,
@@ -83,6 +84,7 @@ const LANDUSE_COLORS := {
 	"leisure=playground": Color(0.65, 0.55, 0.40), "landuse=recreation_ground": COLOR_GRASS,
 	"leisure=golf_course": Color(0.32, 0.58, 0.28), "amenity=school": Color(0.55, 0.53, 0.48),
 	"landuse=cemetery": Color(0.35, 0.50, 0.30), "landuse=basin": COLOR_WATER,
+	"leisure=swimming_pool": Color(0.35, 0.75, 0.85),
 	"natural=water": COLOR_WATER, "landuse=reservoir": COLOR_WATER,
 	"amenity=parking": COLOR_PAVED, "landuse=residential": Color(0.36, 0.50, 0.28),
 	"landuse=commercial": Color(0.55, 0.52, 0.50), "landuse=retail": Color(0.55, 0.52, 0.50),
@@ -94,6 +96,9 @@ var spawn_position := Vector3.ZERO
 var spawn_yaw := 0.0
 var stats := {"roads": 0, "buildings": 0, "areas": 0, "skipped": 0}
 var _terrain: Terrain = null
+## Aerial photo (optional): roof colours come from it and the ground is
+## left unpainted so the photo shows.
+var ortho: Ortho = null
 ## Windows, doors and garage doors on walls (off for geometry tests).
 var facades := true
 ## Where things are, for props and pedestrians (filled by build()).
@@ -174,7 +179,7 @@ func build(data: OsmData, terrain: Terrain = null) -> Node3D:
 			if item[2]:
 				occupancy.mark_polygon(_clean_ring(item[0]), 1.0, Occupancy.WATER)
 				water_rings.append(_clean_ring(item[0]))
-	if _terrain != null:
+	if _terrain != null and ortho == null:
 		_paint_terrain_base(footprints)
 
 	# Pass 2: roads (with curbs and markings) on the final ground. They go
@@ -303,7 +308,7 @@ func _area_kind(tags: Dictionary) -> String:
 
 func _is_water(tags: Dictionary) -> bool:
 	return tags.get("natural") == "water" or tags.get("landuse") == "reservoir" \
-		or tags.get("landuse") == "basin"
+		or tags.get("landuse") == "basin" or tags.get("leisure") == "swimming_pool"
 
 
 func _rect_of(pts: PackedVector2Array) -> Rect2:
@@ -321,8 +326,9 @@ func _paint_area(water_st: SurfaceTool, pts: PackedVector2Array, color: Color, i
 		return false
 	var t := _terrain
 	if not is_water:
-		t.for_each_inside(ring, func(c: int, r: int) -> void:
-			t.colors[r * t.cols + c] = color)
+		if ortho == null:
+			t.for_each_inside(ring, func(c: int, r: int) -> void:
+				t.colors[r * t.cols + c] = color)
 		return true
 	# Elevation data records a lake's surface as flat ground, so the water
 	# level is set just above the typical height inside the outline and the
@@ -342,18 +348,21 @@ func _paint_area(water_st: SurfaceTool, pts: PackedVector2Array, color: Color, i
 			hs.append(t.heights[i])
 		hs.sort()
 		level = hs[hs.size() / 2] + 0.25
+	var pool := color == LANDUSE_COLORS["leisure=swimming_pool"]
 	for i in inside:
 		var p := Vector2(t.x0 + (i % t.cols) * t.dx, t.z0 + (i / t.cols) * t.dz)
-		var depth := WATER_DEPTH * smoothstep(0.0, WATER_SHELF, _dist_to_ring(p, ring))
+		var depth := 1.5 if pool else WATER_DEPTH * smoothstep(0.0, WATER_SHELF, _dist_to_ring(p, ring))
 		t.heights[i] = minf(t.heights[i], level - 0.15 - depth)
-		t.colors[i] = Color(0.30, 0.28, 0.20)
+		t.colors[i] = Color(0.75, 0.85, 0.9) if pool else (Color(0.5, 0.5, 0.5) if ortho != null else Color(0.30, 0.28, 0.20))
+	if pool:
+		stats["pools"] = stats.get("pools", 0) + 1
 	# Draw the surface a few metres into the bank: it then meets the shore
 	# along the terrain's contour instead of the grid's stair-steps.
 	var surface := ring
-	var grown := Geometry2D.offset_polygon(ring, 4.0)
+	var grown := Geometry2D.offset_polygon(ring, 0.3 if pool else 4.0)
 	if not grown.is_empty() and absf(_signed_area(grown[0])) > absf(_signed_area(ring)):
 		surface = grown[0]
-	return _add_flat_polygon(water_st, surface, level, COLOR_WATER)
+	return _add_flat_polygon(water_st, surface, level, color if pool else COLOR_WATER)
 
 
 func _dist_to_ring(p: Vector2, ring: PackedVector2Array) -> float:
@@ -715,7 +724,7 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 			building_list[building_list.size() - 1]["front_dir"] = out2
 
 	if not hip.is_empty():
-		_add_hip_roof(_roofs, hip, y1, ridge, ROOF_PALETTE[absi(hash(id + 7)) % ROOF_PALETTE.size()], gable)
+		_add_hip_roof(_roofs, hip, y1, ridge, _roof_color(ring, id), gable)
 		return true
 
 	# Flat roof (gravel/membrane; world-mapped UVs). If triangulation fails
@@ -729,6 +738,17 @@ func _add_building(st: SurfaceTool, pts: PackedVector2Array, tags: Dictionary, i
 		_tri(_roofs, Vector3(p.x, y1, p.y), Vector3(q.x, y1, q.y), Vector3(r.x, y1, r.y), Vector3.UP, roof,
 			p / Surfaces.TILE_M, q / Surfaces.TILE_M, r / Surfaces.TILE_M)
 	return true
+
+
+## Roof colour: the photo's average over the footprint when there is one
+## (most of a footprint seen from above is roof), else from the palette.
+func _roof_color(ring: PackedVector2Array, id: int) -> Color:
+	if ortho != null:
+		var c := ortho.mean_in_ring(ring, 1.5)
+		if c.r >= 0.0:
+			# Photos are lit; pull toward a mid tone so shading still shows.
+			return c.lerp(Color(0.5, 0.5, 0.5), 0.15).clamp(Color(0.1, 0.1, 0.1), Color(0.85, 0.85, 0.85))
+	return ROOF_PALETTE[absi(hash(id + 7)) % ROOF_PALETTE.size()]
 
 
 ## If the footprint is a small, nearly rectangular building, returns its

@@ -21,6 +21,8 @@ var dz := 1.0
 var base_elevation := 0.0
 
 const SKIRT_LENGTH := 30000.0
+## Aerial photo draped as the ground texture (optional).
+var ortho = null
 
 
 ## Loads a .height file and maps it into `data`'s local frame.
@@ -185,6 +187,11 @@ func build_node() -> StaticBody3D:
 			norms[i] = Vector3(
 				(h(c - 1, r) - h(c + 1, r)) / (2.0 * dx), 1.0,
 				(h(c, r - 1) - h(c, r + 1)) / (2.0 * dz)).normalized()
+	var uvs := PackedVector2Array()
+	if ortho != null:
+		uvs.resize(cols * rows)
+		for i in cols * rows:
+			uvs[i] = ortho.uv(verts[i].x, verts[i].z)
 	var idx := PackedInt32Array()
 	idx.resize((cols - 1) * (rows - 1) * 6)
 	var k := 0
@@ -205,9 +212,11 @@ func build_node() -> StaticBody3D:
 	arrays[Mesh.ARRAY_NORMAL] = norms
 	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = idx
+	if ortho != null:
+		arrays[Mesh.ARRAY_TEX_UV] = uvs
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	mesh.surface_set_material(0, Surfaces.material("ground"))
+	mesh.surface_set_material(0, _ortho_material() if ortho != null else Surfaces.material("ground"))
 	var mi := MeshInstance3D.new()
 	mi.name = "Mesh"
 	mi.mesh = mesh
@@ -245,6 +254,22 @@ func build_node() -> StaticBody3D:
 			(rect.position.y if side == 0 else rect.end.y) if horizontal else center.y)
 		body.add_child(wall)
 	return body
+
+
+## Photo on the ground, with the fine ground grain kept as a normal map so
+## it still catches low sun.
+func _ortho_material() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = ortho.texture
+	m.vertex_color_use_as_albedo = true  # white except where the builder dims (water beds)
+	m.roughness = 1.0
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	var grain := Surfaces.grain(0.035, 0.8, 1.0)
+	m.normal_enabled = true
+	m.normal_texture = grain[1]
+	m.normal_scale = 0.2
+	m.uv1_triplanar = false
+	return m
 
 
 ## Visual-only apron that continues each edge vertex outward, so the world

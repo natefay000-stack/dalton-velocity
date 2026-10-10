@@ -6,3 +6,5 @@ __pycache__/
 maps/*.height
 !maps/sample.height
 *.part
+maps/*.ortho.png
+maps/*.ortho.json

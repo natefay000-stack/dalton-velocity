@@ -36,6 +36,19 @@ This writes `home.osm` + `home.height`; the game picks up any `.osm` in
 few km². Everything is clipped to the box, and the edge of the map has
 invisible walls.
 
+**Then the aerial photo** (USGS orthophoto, public domain, no key):
+
+```bash
+python3 game/tools/fetch_imagery.py game/maps/herriman.osm --pools
+```
+
+Writes `herriman.ortho.png` + `.ortho.json` at ~0.6 m/pixel; the game drapes
+it over the terrain as the ground, samples each roof's real colour from it,
+puts trees where the canopy is and sage where the ground is dry. `--pools`
+finds backyard pools in the photo (blue blobs away from buildings and
+lakes) and adds them to the .osm as `leisure=swimming_pool`; they are
+carved and filled with water. About 2 minutes for a few km².
+
 **Alternative — Overpass (OSM only, flat):**
 
 ```bash
@@ -130,6 +143,8 @@ scripts/traffic.gd         AI cars on the road graph (kinematic bodies)
 scripts/surfaces.gd        procedural materials: grain, brick, shingle, road wear
 scripts/daylight.gd        sun/sky/fog by time of day, night lights
 scripts/minimap.gd         corner minimap + full map, nearest street name
+scripts/ortho.gd           aerial photo: ground texture, roof colours, canopy/lawn tests
+tools/fetch_imagery.py     USGS orthophoto mosaic + pool detection
 scripts/camera_rig.gd      orbit camera with spring arm
 tools/fetch_osm.py         Overpass downloader
 tests/run_tests.gd         headless engine tests (parser, geometry, physics)

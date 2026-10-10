@@ -36,6 +36,7 @@ var _rng := RandomNumberGenerator.new()
 var _ground: Callable
 var _occ: Occupancy
 var _bounds := Rect2()
+var _ortho = null
 
 # Instances collected per MultiMesh key.
 ## key ("deciduous", "car:sedan:3", ...) -> Array[Transform3D]; kept so tests and
@@ -49,6 +50,7 @@ func build(builder: MapBuilder, ground: Callable, seed: int = 1) -> Node3D:
 	_rng.seed = seed
 	_ground = ground
 	_occ = builder.occupancy
+	_ortho = builder.ortho
 	_bounds = _occ.rect.grow(-20.0)
 	var root := Node3D.new()
 	root.name = "Props"
@@ -95,11 +97,18 @@ func _place_yard_trees(buildings: Array[Dictionary]) -> void:
 			continue
 		var rect: Rect2 = b["rect"].grow(7.0)
 		var planted := 0
-		for attempt in 6:
-			if planted >= 2:
+		# With a photo, trees go where the canopy is (more tries, no coin
+		# flip); without one, a couple of random yard trees per house.
+		var tries := 14 if _ortho != null else 6
+		var max_trees := 4 if _ortho != null else 2
+		for attempt in tries:
+			if planted >= max_trees:
 				break
 			var p := Vector2(_rng.randf_range(rect.position.x, rect.end.x), _rng.randf_range(rect.position.y, rect.end.y))
-			if _rng.randf() > 0.5:
+			if _ortho != null:
+				if not _ortho.is_canopy(p.x, p.y):
+					continue
+			elif _rng.randf() > 0.5:
 				continue
 			if _try_tree(p, "deciduous" if _rng.randf() < 0.8 else "conifer", 1.6):
 				planted += 1
@@ -126,6 +135,8 @@ func _place_area_trees(areas: Array[Dictionary]) -> void:
 			var p := Vector2(_rng.randf_range(rect.position.x, rect.end.x), _rng.randf_range(rect.position.y, rect.end.y))
 			if not Geometry2D.is_point_in_polygon(p, ring):
 				continue
+			if _ortho != null and not forest and not _ortho.is_canopy(p.x, p.y):
+				continue
 			var kind := "conifer" if (forest and _rng.randf() < 0.6) or _rng.randf() < 0.25 else "deciduous"
 			if _try_tree(p, kind, 1.5 if forest else 3.0):
 				placed += 1
@@ -139,6 +150,8 @@ func _place_scrub() -> void:
 		if not _occ.is_free(p.x, p.y, 2.0, Occupancy.BUILDING | Occupancy.ROAD | Occupancy.WATER | Occupancy.PATH | Occupancy.PROP):
 			continue
 		if not _occ.is_free(p.x, p.y, 10.0, Occupancy.BUILDING):
+			continue
+		if _ortho != null and not _ortho.is_open_ground(p.x, p.y):
 			continue
 		_add_tree(p, "scrub", _rng.randf_range(0.6, 1.3))
 		stats["scrub"] += 1

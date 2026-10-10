@@ -13,6 +13,7 @@ const PropsBuilder := preload("res://scripts/props_builder.gd")
 const Pedestrians := preload("res://scripts/pedestrians.gd")
 const Traffic := preload("res://scripts/traffic.gd")
 const Daylight := preload("res://scripts/daylight.gd")
+const Ortho := preload("res://scripts/ortho.gd")
 
 var failures := 0
 
@@ -41,6 +42,8 @@ func _run() -> void:
 	await test_terrain()
 	print("props")
 	await test_props()
+	print("ortho")
+	await test_ortho()
 	print("daylight")
 	test_daylight()
 	print("physics")
@@ -52,8 +55,8 @@ func _run() -> void:
 func test_sample_parse() -> void:
 	var d := OsmData.new()
 	check(d.parse_file("res://maps/sample.osm") == OK, "sample.osm parses")
-	check(d.points.size() == 567, "all 567 nodes projected (got %d)" % d.points.size())
-	check(d.ways.size() == 170, "all 170 ways read (got %d)" % d.ways.size())
+	check(d.points.size() == 571, "all 571 nodes projected (got %d)" % d.points.size())
+	check(d.ways.size() == 171, "all 171 ways read (got %d)" % d.ways.size())
 	# Grid is 4 x 110 m blocks centred on the origin.
 	# Grid is 440 m; the declared <bounds> adds a 60 m margin each side.
 	check(absf(d.bounds.size.x - 560.0) < 1.0, "east-west extent from <bounds> ~560 m (got %.2f)" % d.bounds.size.x)
@@ -67,7 +70,7 @@ func test_sample_parse() -> void:
 	var root := b.build(d)
 	check(b.stats["roads"] == 41, "10 streets in 4 blocks each + 1 footway (got %d)" % b.stats["roads"])
 	check(b.stats["buildings"] == 127, "120 houses + 7 L-shaped blocks (got %d)" % b.stats["buildings"])
-	check(b.stats["areas"] == 2, "park + pond (got %d)" % b.stats["areas"])
+	check(b.stats["areas"] == 3, "park + pond + pool (got %d)" % b.stats["areas"])
 	check(b.stats["skipped"] == 0, "nothing skipped")
 	check(root.has_node("Buildings/Mesh") and root.has_node("Roads") and root.has_node("Ground"), "scene nodes built")
 	var faces: PackedVector3Array = (root.get_node("Buildings/CollisionShape3D") as CollisionShape3D).shape.get_faces()
@@ -526,6 +529,80 @@ func test_props() -> void:
 	check(driving == 10, "AI cars keep driving (%d moved >10 m)" % driving)
 	tr.queue_free()
 	node.queue_free()
+	map.queue_free()
+	await process_frame
+
+
+## Synthetic aerial photo over the sample map: lawn green everywhere, a
+## dark canopy patch, a red patch over the NW house, blue over the pool.
+func _write_test_ortho(d: OsmData, base: String) -> void:
+	var b: Dictionary = d._bounds_tag
+	var w := 280
+	var h := 280
+	var img := Image.create(w, h, false, Image.FORMAT_RGB8)
+	img.fill(Color(0.45, 0.62, 0.30))
+	for y in h:
+		for x in w:
+			# Map 560 m across 280 px (2 m/px); the NW house spans x -211..-192, z -211..-189
+			var mx := -280.0 + x * 2.0
+			var mz := -280.0 + y * 2.0
+			if mx > -211.0 and mx < -192.0 and mz > -211.0 and mz < -189.0:
+				img.set_pixel(x, y, Color(0.6, 0.15, 0.1))
+			elif mx > -100.0 and mx < -60.0 and mz > 100.0 and mz < 140.0:
+				img.set_pixel(x, y, Color(0.15, 0.32, 0.12))  # canopy
+			elif mx > 120.0 and mz > 120.0:
+				img.set_pixel(x, y, Color(0.62, 0.55, 0.40))  # dry ground
+	img.save_png(base + ".ortho.png")
+	var f := FileAccess.open(base + ".ortho.json", FileAccess.WRITE)
+	f.store_string(JSON.stringify({"south": b["minlat"], "west": b["minlon"], "north": b["maxlat"], "east": b["maxlon"],
+		"width": w, "height": h, "meters_per_px": 2.0}))
+	f.close()
+
+
+func test_ortho() -> void:
+	var d := OsmData.new()
+	d.parse_file("res://maps/sample.osm")
+	var base := "user://ortho_test"
+	_write_test_ortho(d, base)
+	var o := Ortho.new()
+	check(o.load_for(base + ".osm", d) == OK, "ortho loads from <map>.ortho.png/json")
+	check(o.rect.grow(1.0).encloses(d.bounds), "ortho covers the map bounds")
+	check(o.uv(-280.0, -280.0).length() < 0.01 and (o.uv(280.0, 280.0) - Vector2.ONE).length() < 0.01, "uv mapping spans the photo")
+	check(o.is_canopy(-80.0, 120.0) and not o.is_canopy(0.0, 0.0), "canopy detected where the photo is dark green")
+	check(o.is_lawn(0.0, 0.0) and not o.is_lawn(200.0, 200.0), "lawn vs dry ground")
+	check(o.is_open_ground(200.0, 200.0), "open ground where the photo is tan")
+	check(Ortho.new().load_for("user://nope.osm", d) == ERR_FILE_NOT_FOUND, "missing photo is a clean miss")
+
+	var path := "user://ortho_terrain.height"
+	_write_test_height(d, path)
+	var t := Terrain.new()
+	t.load_file(path, d)
+	t.ortho = o
+	var b := MapBuilder.new()
+	b.ortho = o
+	b.facades = false
+	var map := b.build(d, t)
+	root.add_child(map)
+	await physics_frame
+	var tmesh: ArrayMesh = (map.get_node("Terrain/Mesh") as MeshInstance3D).mesh
+	var arrays := tmesh.surface_get_arrays(0)
+	check(arrays[Mesh.ARRAY_TEX_UV] != null and arrays[Mesh.ARRAY_TEX_UV].size() == t.cols * t.rows, "terrain mesh carries photo UVs")
+	check(tmesh.surface_get_material(0).albedo_texture == o.texture, "terrain is textured with the photo")
+	# The NW house's roof takes the red from the photo.
+	var bmesh: ArrayMesh = (map.get_node("Buildings/Mesh") as MeshInstance3D).mesh
+	var roofs := bmesh.surface_get_arrays(2)  # walls, brick, roofs, ...
+	var rv: PackedVector3Array = roofs[Mesh.ARRAY_VERTEX]
+	var rc: PackedColorArray = roofs[Mesh.ARRAY_COLOR]
+	var red := 0
+	var checked := 0
+	for i in rv.size():
+		if rv[i].x > -213.0 and rv[i].x < -190.0 and rv[i].z > -213.0 and rv[i].z < -187.0:
+			checked += 1
+			if rc[i].r > rc[i].g * 2.0:
+				red += 1
+	check(checked > 0 and red == checked, "roof colour sampled from the photo (%d/%d red)" % [red, checked])
+	check(b.stats.get("pools", 0) == 1, "pool carved from leisure=swimming_pool (%d)" % b.stats.get("pools", 0))
+	check(b.occupancy.get_at(-201.0, -181.0) & Occupancy.WATER, "pool is water in the occupancy grid")
 	map.queue_free()
 	await process_frame
 
